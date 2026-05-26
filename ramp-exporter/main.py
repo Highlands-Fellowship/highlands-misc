@@ -35,9 +35,11 @@ OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output"))
 def _setup_logging(dry_run: bool) -> None:
     LOG_FILE.parent.mkdir(exist_ok=True)
     OUTPUT_DIR.mkdir(exist_ok=True)
-    handlers = [logging.StreamHandler(sys.stdout)]
+    console = logging.StreamHandler(sys.stdout)
+    console.stream.reconfigure(encoding="utf-8", errors="replace")
+    handlers = [console]
     if not dry_run:
-        handlers.append(logging.FileHandler(LOG_FILE))
+        handlers.append(logging.FileHandler(LOG_FILE, encoding="utf-8"))
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
@@ -128,7 +130,7 @@ def main() -> None:
 
     unique_txns = len({row["id"] for row in rows})
     log.info(
-        "%d SYNC_READY transaction(s) passed validation → %d distribution row(s). "
+        "%d SYNC_READY transaction(s) passed validation -> %d distribution row(s). "
         "Check above for any SKIPPED warnings.",
         unique_txns, len(rows),
     )
