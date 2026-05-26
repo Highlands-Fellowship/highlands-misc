@@ -2,10 +2,12 @@
 Ramp → Sage 50 card-transaction export.
 
 Usage:
-  python main.py                        # normal run
-  python main.py --dry-run              # build CSV, print count, skip email + state
-  python main.py --dump-raw             # print raw JSON for first transaction and exit
-  python main.py --date-from 2026-01-01 # pull from a specific date (ignores state)
+  python main.py                          # normal run
+  python main.py --dry-run                # build CSV, skip email + state
+  python main.py --dump-raw               # print raw JSON for first SYNC_READY transaction
+  python main.py --date-from 2026-01-01   # pull from a specific date (ignores state)
+  python main.py --limit 1                # cap export at N transactions
+  python main.py --limit 1 --mark-synced  # full test: email + mark synced in Ramp
 """
 
 import argparse
@@ -67,6 +69,7 @@ def main() -> None:
     parser.add_argument("--merchant", metavar="NAME", help="filter --dump-raw by merchant name (substring)")
     parser.add_argument("--date-from", metavar="YYYY-MM-DD")
     parser.add_argument("--limit", metavar="N", type=int, help="cap export at N transactions (for test imports)")
+    parser.add_argument("--mark-synced", action="store_true", help="mark exported transactions as synced in Ramp after emailing")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -140,13 +143,13 @@ def main() -> None:
     log.info("CSV written to %s", csv_path)
 
     if args.dry_run:
-        log.info("[dry-run] Skipping email and state update.")
+        log.info("[dry-run] Skipping email, state update, and sync.")
         return
 
-    subject = f"Ramp → Sage Import Ready — {len(rows)} transactions ({today:%B %d, %Y})"
+    subject = f"Ramp → Sage Import Ready — {unique_txns} transaction(s) ({today:%B %d, %Y})"
     body = (
-        f"{len(rows)} card transaction(s) are ready to import into Sage 50.\n\n"
-        f"Attach the file to Sage 50 via:\n"
+        f"{unique_txns} card transaction(s) are ready to import into Sage 50.\n\n"
+        f"Import into Sage 50 via:\n"
         f"  File > Select Import/Export > Vendor Invoices > Import\n\n"
         f"Generated: {today:%Y-%m-%d}"
     )
@@ -166,6 +169,11 @@ def main() -> None:
     new_ids = exported_ids | {row["id"] for row in rows}
     _save_exported_ids(new_ids)
     log.info("State file updated. %d total exported IDs tracked.", len(new_ids))
+
+    if args.mark_synced:
+        tx_ids = list({row["id"] for row in rows})
+        log.info("Marking %d transaction(s) as synced in Ramp...", len(tx_ids))
+        ramp_client.mark_synced(client_id, client_secret, tx_ids)
 
 
 if __name__ == "__main__":

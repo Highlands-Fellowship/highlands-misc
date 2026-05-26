@@ -11,17 +11,39 @@ import requests
 
 RAMP_TOKEN_URL = "https://api.ramp.com/developer/v1/token"
 RAMP_TRANSACTIONS_URL = "https://api.ramp.com/developer/v1/transactions"
+RAMP_SYNC_URL = "https://api.ramp.com/developer/v1/accounting/sync"
 
 
-def _get_token(client_id: str, client_secret: str) -> str:
+def _get_token(client_id: str, client_secret: str, write: bool = False) -> str:
+    scope = "transactions:read accounting:write" if write else "transactions:read"
     resp = requests.post(
         RAMP_TOKEN_URL,
         auth=(client_id, client_secret),
-        data={"grant_type": "client_credentials", "scope": "transactions:read"},
+        data={"grant_type": "client_credentials", "scope": scope},
         timeout=30,
     )
     resp.raise_for_status()
     return resp.json()["access_token"]
+
+
+def mark_synced(client_id: str, client_secret: str, transaction_ids: list[str]) -> None:
+    """Mark a list of transaction IDs as synced in Ramp."""
+    import logging
+    log = logging.getLogger(__name__)
+
+    token = _get_token(client_id, client_secret, write=True)
+    resp = requests.post(
+        RAMP_SYNC_URL,
+        headers={"Authorization": f"Bearer {token}"},
+        json={"transaction_ids": transaction_ids},
+        timeout=30,
+    )
+    if not resp.ok:
+        raise RuntimeError(
+            f"Ramp sync API {resp.status_code}\n"
+            f"body: {resp.text}"
+        )
+    log.info("Marked %d transaction(s) as synced in Ramp.", len(transaction_ids))
 
 
 def _get(token: str, params: dict, url: str = RAMP_TRANSACTIONS_URL) -> dict:
