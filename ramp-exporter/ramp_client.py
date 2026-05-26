@@ -187,7 +187,14 @@ def _validate(tx: dict) -> list[str]:
 
 
 def _assign_invoices_and_expand(txns: list[dict]) -> list[dict]:
-    """Validate, generate unique invoice numbers, then expand each transaction to rows."""
+    """Validate, generate unique invoice numbers, then expand each transaction to rows.
+    Transactions are sorted oldest-first by accounting_date so --limit N picks the
+    earliest unsynced transactions and imports into Sage in chronological order.
+    """
+    txns = sorted(
+        txns,
+        key=lambda t: t.get("accounting_date") or t.get("user_transaction_time") or "",
+    )
     import logging
     log = logging.getLogger(__name__)
 
