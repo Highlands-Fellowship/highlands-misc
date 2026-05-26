@@ -156,11 +156,11 @@ def fetch_sync_ready_transactions(
     client_secret: str,
     skip_ids: set[str],
     from_date: str | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], list[dict]]:
     """
     Pull all SYNC_READY card transactions and expand into per-line-item rows.
-    Invoice numbers are generated as  MerchantName.MM.DD.YYYY  with a -2, -3
-    suffix when the same merchant appears more than once on the same date.
+    Returns (rows, skipped) where skipped is a list of dicts with keys:
+      merchant, date, reasons  — for surfacing in the email body.
     """
     token = _get_token(client_id, client_secret)
 
@@ -208,30 +208,31 @@ def _validate(tx: dict) -> list[str]:
     return errors
 
 
-def _assign_invoices_and_expand(txns: list[dict]) -> list[dict]:
+def _assign_invoices_and_expand(txns: list[dict]) -> tuple[list[dict], list[dict]]:
     """Validate, generate unique invoice numbers, then expand each transaction to rows.
     Transactions are sorted oldest-first by accounting_date so --limit N picks the
     earliest unsynced transactions and imports into Sage in chronological order.
+    Returns (rows, skipped) where each skipped entry has merchant/date/reasons keys.
     """
+    import logging
+    log = logging.getLogger(__name__)
+
     txns = sorted(
         txns,
         key=lambda t: t.get("accounting_date") or t.get("user_transaction_time") or "",
     )
-    import logging
-    log = logging.getLogger(__name__)
 
     vendor_date_counter: dict[str, int] = {}
     rows: list[dict] = []
+    skipped: list[dict] = []
 
     for tx in txns:
         errors = _validate(tx)
         if errors:
             merchant = tx.get("merchant_name") or "unknown merchant"
-            date_str = _format_date(tx.get("user_transaction_time") or "")
-            log.warning(
-                "SKIPPED %s  %s  %s — %s",
-                tx["id"], merchant, date_str, "; ".join(errors),
-            )
+            date_str = _format_date(tx.get("accounting_date") or tx.get("user_transaction_time") or "")
+            log.warning("SKIPPED %s  %s  %s -- %s", tx["id"], merchant, date_str, "; ".join(errors))
+            skipped.append({"merchant": merchant, "date": date_str, "reasons": errors})
             continue
 
         vendor = _vendor_id(tx)
@@ -246,7 +247,7 @@ def _assign_invoices_and_expand(txns: list[dict]) -> list[dict]:
 
         rows.extend(_expand_transaction(tx, invoice))
 
-    return rows
+    return rows, skipped
 
 
 def dump_raw_transaction(

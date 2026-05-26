@@ -106,12 +106,15 @@ def main() -> None:
     exported_ids = _load_exported_ids() if not args.date_from else set()
 
     log.info("Fetching sync-ready transactions from Ramp...")
-    rows = ramp_client.fetch_sync_ready_transactions(
+    rows, skipped = ramp_client.fetch_sync_ready_transactions(
         client_id,
         client_secret,
         skip_ids=exported_ids,
         from_date=args.date_from,
     )
+
+    if skipped:
+        log.warning("%d transaction(s) skipped due to missing fields (see above).", len(skipped))
 
     if not rows:
         log.info("Nothing to do — no new sync-ready transactions.")
@@ -137,7 +140,7 @@ def main() -> None:
 
     csv_data = sage_formatter.build_csv(rows)
     today = date.today()
-    csv_filename = f"sage_import_{today:%Y%m%d}.csv"
+    csv_filename = f"sage_card_transactions_{today:%Y%m%d}.csv"
     csv_path = OUTPUT_DIR / csv_filename
     # Use newline="" so Python doesn't translate \r\n → \r\r\n on Windows
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -148,11 +151,23 @@ def main() -> None:
         log.info("[dry-run] Skipping email, state update, and sync.")
         return
 
-    subject = f"Ramp → Sage Import Ready — {unique_txns} transaction(s) ({today:%B %d, %Y})"
+    subject = f"Ramp Card Transactions Ready for Sage 50 — {unique_txns} transaction(s) ({today:%B %d, %Y})"
+
+    skipped_section = ""
+    if skipped:
+        lines = [f"\n\nWARNING: {len(skipped)} transaction(s) were skipped and are NOT in the attached file."]
+        lines.append("Fix these in Ramp and they will be included in the next export:\n")
+        for s in skipped:
+            lines.append(f"  {s['date']}  {s['merchant']}")
+            for reason in s["reasons"]:
+                lines.append(f"    - {reason}")
+        skipped_section = "\n".join(lines)
+
     body = (
-        f"{unique_txns} card transaction(s) are ready to import into Sage 50.\n\n"
+        f"{unique_txns} card transaction(s) are ready to import into Sage 50."
+        f"{skipped_section}\n\n"
         f"Import into Sage 50 via:\n"
-        f"  File > Select Import/Export > Vendor Invoices > Import\n\n"
+        f"  File > Select Import/Export > Accounts Payable > Purchases Journal > Import\n\n"
         f"Generated: {today:%Y-%m-%d}"
     )
 

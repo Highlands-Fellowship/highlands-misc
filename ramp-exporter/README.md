@@ -79,7 +79,7 @@ python main.py --dump-raw --merchant "Walmart"
 python main.py --dry-run --limit 1
 ```
 
-The CSV is saved to `output\sage_import_YYYYMMDD.csv`. Import it into a Sage 50 test company via **File → Select Import/Export → Vendor Invoices → Import** to confirm no errors.
+The CSV is saved to `output\sage_import_YYYYMMDD.csv`. Import it into a Sage 50 test company via **File → Select Import/Export → Accounts Payable → Purchases Journal → Import** to confirm no errors.
 
 ### 5. Schedule on Windows
 
