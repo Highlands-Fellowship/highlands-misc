@@ -1,0 +1,6 @@
+.env
+exported_ids.json
+output/
+logs/
+__pycache__/
+*.pyc

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/randy/Downloads -maxdepth 1 -type f \\\\\\( -name \"*Ramp*\" -o -name \"*Sage*\" \\\\\\) -name \"*.csv\" 2>/dev/null | head -20)",
+      "Bash(ls /Users/randy/Documents/GitHub/)",
+      "Bash(gh auth *)",
+      "Bash(gh repo *)",
+      "Bash(git --version)",
+      "Bash(git config *)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//usr/local/bin/**)"
+    ]
+  }
+}
