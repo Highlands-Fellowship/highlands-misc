@@ -13,24 +13,31 @@ def send_csv(
     gmail_app_password: str,
     to_address: str,
     subject: str,
-    body: str,
+    body_plain: str,
     csv_data: str,
     filename: str,
+    body_html: str | None = None,
 ) -> None:
-    msg = MIMEMultipart()
-    msg["From"] = gmail_user
-    msg["To"] = to_address
-    msg["Subject"] = subject
+    outer = MIMEMultipart("mixed")
+    outer["From"] = gmail_user
+    outer["To"] = to_address
+    outer["Subject"] = subject
 
-    msg.attach(MIMEText(body, "plain"))
+    if body_html:
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(body_plain, "plain", "utf-8"))
+        alt.attach(MIMEText(body_html, "html", "utf-8"))
+        outer.attach(alt)
+    else:
+        outer.attach(MIMEText(body_plain, "plain", "utf-8"))
 
     part = MIMEBase("application", "octet-stream")
     part.set_payload(csv_data.encode("utf-8"))
     encoders.encode_base64(part)
     part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
-    msg.attach(part)
+    outer.attach(part)
 
     context = ssl.create_default_context()
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
         server.login(gmail_user, gmail_app_password)
-        server.sendmail(gmail_user, to_address, msg.as_string())
+        server.sendmail(gmail_user, to_address, outer.as_string())

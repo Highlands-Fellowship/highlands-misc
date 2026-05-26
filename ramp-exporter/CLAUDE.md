@@ -58,7 +58,19 @@ Optional: `OUTPUT_DIR` (defaults to `./output/`)
 
 **`exported_ids.json`** — state file tracking Ramp transaction IDs already exported. Prevents duplicates on subsequent runs. Skipped when `--date-from` is passed.
 
+## Reimbursements
+
+**`reimbursement_client.py`** fetches from `GET /developer/v1/reimbursements`, same pagination/filter pattern as card transactions. Scope: `reimbursements:read`. `fetch_sync_ready_reimbursements` returns `(rows, skipped)`. Expands each reimbursement into two rows (debit/credit pair): `entry_type = "debit"` uses the expense G/L account, `entry_type = "credit"` uses `REIMBURSEMENT_CLEARING_ACCOUNT` env var (default `2200-00`). Date: `created_at` fallback to `transaction_date`.
+
+**`reimbursement_formatter.py`** builds a 13-column Sage 50 General Journal CSV (Date, Reference, Description, G/L Account, Debit, Credit, plus fixed metadata columns). Debit rows get a positive Amount in the Debit column; credit rows get a positive Amount in the Credit column. Reference is fixed as "Ramp Reimbursement".
+
+**`reimburse.py`** entry point — same flags as `main.py` except `--employee` instead of `--merchant` for `--dump-raw` filter. State file: `exported_reimb_ids.json`.
+
+**`email_template.py`** — Highlands Fellowship branded HTML email. `build_card_email(count, gen_date, skipped)` and `build_reimbursement_email(count, gen_date, skipped)` both return `(html, plain_text)`. Skipped transactions appear in a yellow warning box; import path appears in a cream/teal box.
+
+**`emailer.py`** — `send_csv` now accepts optional `body_html` param. When provided, sends `multipart/mixed` with a `multipart/alternative` inner part (plain + HTML) plus the CSV attachment.
+
 ## Deferred features
 
-- Marking transactions as synced in Ramp (`PATCH /transactions/{id}/sync`) — intentionally not implemented until CSV output is validated against Sage
-- Reimbursement and Bill Pay transaction types (separate scripts, same structure)
+- Marking reimbursements as synced in Ramp — add same `--mark-synced` pattern from `main.py` once reimbursement CSV output is validated against Sage
+- Bill Pay transaction type — same structure as card transactions

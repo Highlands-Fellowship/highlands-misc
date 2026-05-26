@@ -1,0 +1,316 @@
+"""
+Ramp API client for reimbursements.
+
+Each SYNC_READY reimbursement expands into 4 rows (or n+3 rows for multi-split):
+
+  Expense entry (date = accounting_date):
+    Row 1..n  — debit each expense G/L account (one per line_item)
+    Row n+1   — credit ACH clearing account (total amount, negative)
+
+  Payment entry (date = payment_processed_at):
+    Row n+2   — debit ACH clearing account (total amount, positive)
+    Row n+3   — credit bank/cash account (total amount, negative)
+
+Run  python reimburse.py --dump-raw  to inspect raw JSON before going live.
+
+Key field locations (confirmed from live API):
+  - GL Account:    line_items[].accounting_field_selections[type=GL_ACCOUNT].external_code
+  - Amount:        line_items[].amount.amount / minor_unit_conversion_rate
+  - Expense date:  accounting_date (fallback: transaction_date)
+  - Payment date:  payment_processed_at (fallback: expense date)
+  - Employee:      user_full_name
+"""
+
+import datetime
+import logging
+import requests
+
+RAMP_TOKEN_URL = "https://api.ramp.com/developer/v1/token"
+RAMP_REIMBURSEMENTS_URL = "https://api.ramp.com/developer/v1/reimbursements"
+RAMP_SYNCS_URL = "https://api.ramp.com/developer/v1/accounting/syncs"
+
+
+def _get_token(client_id: str, client_secret: str, write: bool = False) -> str:
+    scope = "reimbursements:read accounting:write" if write else "reimbursements:read"
+    resp = requests.post(
+        RAMP_TOKEN_URL,
+        auth=(client_id, client_secret),
+        data={"grant_type": "client_credentials", "scope": scope},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+def mark_synced(client_id: str, client_secret: str, reimbursement_ids: list[str]) -> None:
+    """Mark a list of reimbursement IDs as synced in Ramp via the /accounting/syncs endpoint."""
+    import uuid
+    log = logging.getLogger(__name__)
+    token = _get_token(client_id, client_secret, write=True)
+    resp = requests.post(
+        RAMP_SYNCS_URL,
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "idempotency_key": str(uuid.uuid4()),
+            "sync_type": "REIMBURSEMENT_SYNC",
+            "successful_syncs": [
+                {"id": rid, "reference_id": rid}
+                for rid in reimbursement_ids
+            ],
+        },
+        timeout=30,
+    )
+    if not resp.ok:
+        raise RuntimeError(
+            f"Ramp sync API {resp.status_code}\n"
+            f"body: {resp.text}"
+        )
+    log.info("Marked %d reimbursement(s) as synced in Ramp.", len(reimbursement_ids))
+
+
+def _get(token: str, params: dict, url: str = RAMP_REIMBURSEMENTS_URL) -> dict:
+    resp = requests.get(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        params=params if url == RAMP_REIMBURSEMENTS_URL else None,
+        timeout=30,
+    )
+    if not resp.ok:
+        raise RuntimeError(
+            f"Ramp API {resp.status_code} on GET /reimbursements\n"
+            f"url:  {resp.url}\n"
+            f"body: {resp.text}"
+        )
+    return resp.json()
+
+
+def _format_date(raw: str) -> str:
+    if not raw:
+        return ""
+    try:
+        dt = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return dt.strftime("%m/%d/%Y")
+    except Exception:
+        return raw[:10]
+
+
+def _gl_account(item: dict) -> str:
+    for sel in item.get("accounting_field_selections") or []:
+        if sel.get("type") == "GL_ACCOUNT":
+            return (sel.get("external_code") or sel.get("external_id") or "").strip()
+    return ""
+
+
+def _line_item_amount(item: dict) -> float:
+    amt = item.get("amount") or {}
+    if isinstance(amt, dict):
+        raw = amt.get("amount", 0)
+        rate = amt.get("minor_unit_conversion_rate", 100)
+        return raw / rate
+    return float(amt)
+
+
+def _validate(reimb: dict) -> list[str]:
+    errors = []
+    line_items = reimb.get("line_items") or []
+    if not line_items:
+        errors.append("no line items")
+        return errors
+    for i, item in enumerate(line_items, 1):
+        if not _gl_account(item):
+            errors.append(f"line item {i} missing G/L Account (set Category/GL Account in Ramp)")
+    return errors
+
+
+def _expand_reimbursement(reimb: dict) -> list[dict]:
+    """
+    Return 4 rows per reimbursement (or n+3 rows for n expense line items):
+      - n debit rows   (expense GL accounts, expense date)
+      - 1 credit row   (ACH clearing,        expense date)
+      - 1 debit row    (ACH clearing,        payment date)
+      - 1 credit row   (bank account,        payment date)
+
+    gl_account is None for clearing and bank rows — the formatter
+    substitutes env-configured account codes at write time.
+    """
+    reimb_id = reimb["id"]
+    employee_name = (reimb.get("user_full_name") or "").strip()
+    memo = (reimb.get("memo") or "").strip()
+
+    # Expense rows use the original memo; payment rows use "Reimbursement - Name"
+    expense_desc = memo or employee_name or "Ramp Reimbursement"
+    payment_desc = f"Reimbursement - {employee_name}" if employee_name else "Ramp Reimbursement"
+
+    raw_expense = (
+        reimb.get("accounting_date")
+        or reimb.get("transaction_date")
+        or reimb.get("created_at")
+        or ""
+    )
+    expense_date = _format_date(raw_expense)
+    payment_date = _format_date(reimb.get("payment_processed_at") or raw_expense)
+
+    line_items = reimb.get("line_items") or []
+    total_amount = sum(_line_item_amount(item) for item in line_items)
+
+    # Number of distributions for each journal entry
+    expense_num_dist = len(line_items) + 1  # n expense debits + 1 clearing credit
+    payment_num_dist = 2                    # 1 clearing debit + 1 bank credit
+
+    rows = []
+
+    # --- Expense entry ---
+    for item in line_items:
+        rows.append({
+            "id": reimb_id,
+            "date": expense_date,
+            "description": expense_desc,
+            "gl_account": _gl_account(item),
+            "amount": _line_item_amount(item),
+            "num_distributions": expense_num_dist,
+            "row_role": "expense_debit",
+        })
+
+    rows.append({
+        "id": reimb_id,
+        "date": expense_date,
+        "description": expense_desc,
+        "gl_account": None,          # ACH clearing — filled by formatter
+        "amount": -total_amount,
+        "num_distributions": expense_num_dist,
+        "row_role": "expense_credit",
+    })
+
+    # --- Payment entry ---
+    rows.append({
+        "id": reimb_id,
+        "date": payment_date,
+        "description": payment_desc,
+        "gl_account": None,          # ACH clearing — filled by formatter
+        "amount": total_amount,
+        "num_distributions": payment_num_dist,
+        "row_role": "payment_debit",
+    })
+
+    rows.append({
+        "id": reimb_id,
+        "date": payment_date,
+        "description": payment_desc,
+        "gl_account": None,          # Bank account — filled by formatter
+        "amount": -total_amount,
+        "num_distributions": payment_num_dist,
+        "row_role": "payment_credit",
+    })
+
+    return rows
+
+
+def fetch_sync_ready_reimbursements(
+    client_id: str,
+    client_secret: str,
+    skip_ids: set[str],
+    from_date: str | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Pull all SYNC_READY reimbursements and expand into journal rows.
+    Returns (rows, skipped).
+    """
+    log = logging.getLogger(__name__)
+    token = _get_token(client_id, client_secret)
+
+    params: dict = {"page_size": 100}
+    if from_date:
+        if len(from_date) == 10:
+            from_date = from_date + "T00:00:00Z"
+        params["from_date"] = from_date
+
+    raw_reimbs: list[dict] = []
+    next_url = None
+    while True:
+        body = _get(token, params, url=next_url or RAMP_REIMBURSEMENTS_URL)
+        for reimb in body.get("data", []):
+            if reimb.get("sync_status") != "SYNC_READY":
+                continue
+            if reimb["id"] in skip_ids:
+                continue
+            raw_reimbs.append(reimb)
+
+        next_url = body.get("page", {}).get("next")
+        if not next_url:
+            break
+        params = {}
+
+    raw_reimbs.sort(
+        key=lambda r: (
+            r.get("accounting_date")
+            or r.get("transaction_date")
+            or r.get("created_at")
+            or ""
+        )
+    )
+
+    rows: list[dict] = []
+    skipped: list[dict] = []
+
+    for reimb in raw_reimbs:
+        errors = _validate(reimb)
+        if errors:
+            name = (reimb.get("user_full_name") or "unknown").strip()
+            raw_date = (
+                reimb.get("accounting_date")
+                or reimb.get("transaction_date")
+                or reimb.get("created_at")
+                or ""
+            )
+            date_str = _format_date(raw_date)
+            log.warning(
+                "SKIPPED %s  %s  %s -- %s",
+                reimb["id"], name, date_str, "; ".join(errors),
+            )
+            skipped.append({"merchant": name, "date": date_str, "reasons": errors})
+            continue
+
+        rows.extend(_expand_reimbursement(reimb))
+
+    return rows, skipped
+
+
+def dump_raw_reimbursement(
+    client_id: str,
+    client_secret: str,
+    employee: str | None = None,
+) -> tuple[dict | None, dict]:
+    """Return the oldest matching SYNC_READY reimbursement (same ordering as the export)."""
+    token = _get_token(client_id, client_secret)
+    params: dict = {"page_size": 100}
+    next_url = None
+    candidates: list[dict] = []
+    last_body: dict = {}
+
+    while True:
+        last_body = _get(token, params, url=next_url or RAMP_REIMBURSEMENTS_URL)
+        for reimb in last_body.get("data", []):
+            if reimb.get("sync_status") != "SYNC_READY":
+                continue
+            if employee:
+                full_name = (reimb.get("user_full_name") or "").lower()
+                if employee.lower() not in full_name:
+                    continue
+            candidates.append(reimb)
+
+        next_url = last_body.get("page", {}).get("next")
+        if not next_url:
+            break
+        params = {}
+
+    if not candidates:
+        return None, last_body
+
+    candidates.sort(
+        key=lambda r: (
+            r.get("accounting_date")
+            or r.get("transaction_date")
+            or r.get("created_at")
+            or ""
+        )
+    )
+    return candidates[0], last_body

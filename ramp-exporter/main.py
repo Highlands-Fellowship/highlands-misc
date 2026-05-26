@@ -2,12 +2,13 @@
 Ramp → Sage 50 card-transaction export.
 
 Usage:
-  python main.py                          # normal run
-  python main.py --dry-run                # build CSV, skip email + state
-  python main.py --dump-raw               # print raw JSON for first SYNC_READY transaction
-  python main.py --date-from 2026-01-01   # pull from a specific date (ignores state)
-  python main.py --limit 1                # cap export at N transactions
-  python main.py --limit 1 --mark-synced  # full test: email + mark synced in Ramp
+  python main.py                                  # normal run
+  python main.py --dry-run                        # build CSV, skip email + state
+  python main.py --dump-raw                       # print raw JSON for first SYNC_READY transaction
+  python main.py --date-from 2026-01-01           # pull from a specific date (ignores state)
+  python main.py --limit 1                        # cap export at N transactions
+  python main.py --limit 1 --mark-synced          # full test: email + mark synced in Ramp
+  python main.py --mark-synced-ids ID1 ID2 ...    # mark specific IDs synced without re-exporting
 """
 
 import argparse
@@ -25,6 +26,7 @@ load_dotenv()
 import ramp_client
 import sage_formatter
 import emailer
+import email_template
 
 BASE_DIR = Path(__file__).parent
 STATE_FILE = BASE_DIR / "exported_ids.json"
@@ -72,6 +74,7 @@ def main() -> None:
     parser.add_argument("--date-from", metavar="YYYY-MM-DD")
     parser.add_argument("--limit", metavar="N", type=int, help="cap export at N transactions (for test imports)")
     parser.add_argument("--mark-synced", action="store_true", help="mark exported transactions as synced in Ramp after emailing")
+    parser.add_argument("--mark-synced-ids", metavar="ID", nargs="+", help="mark specific transaction IDs as synced without re-exporting")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -79,6 +82,11 @@ def main() -> None:
 
     client_id = _require_env("RAMP_CLIENT_ID")
     client_secret = _require_env("RAMP_CLIENT_SECRET")
+
+    if args.mark_synced_ids:
+        log.info("Marking %d transaction(s) as synced in Ramp...", len(args.mark_synced_ids))
+        ramp_client.mark_synced(client_id, client_secret, args.mark_synced_ids)
+        return
 
     # --dump-raw: print first matching SYNC_READY transaction and exit
     if args.dump_raw:
@@ -153,22 +161,10 @@ def main() -> None:
 
     subject = f"Ramp Card Transactions Ready for Sage 50 — {unique_txns} transaction(s) ({today:%B %d, %Y})"
 
-    skipped_section = ""
-    if skipped:
-        lines = [f"\n\nWARNING: {len(skipped)} transaction(s) were skipped and are NOT in the attached file."]
-        lines.append("Fix these in Ramp and they will be included in the next export:\n")
-        for s in skipped:
-            lines.append(f"  {s['date']}  {s['merchant']}")
-            for reason in s["reasons"]:
-                lines.append(f"    - {reason}")
-        skipped_section = "\n".join(lines)
-
-    body = (
-        f"{unique_txns} card transaction(s) are ready to import into Sage 50."
-        f"{skipped_section}\n\n"
-        f"Import into Sage 50 via:\n"
-        f"  File > Select Import/Export > Accounts Payable > Purchases Journal > Import\n\n"
-        f"Generated: {today:%Y-%m-%d}"
+    html_body, plain_body = email_template.build_card_email(
+        count=unique_txns,
+        gen_date=f"{today:%Y-%m-%d}",
+        skipped=skipped,
     )
 
     log.info("Sending email to %s...", notify_email)
@@ -177,9 +173,10 @@ def main() -> None:
         gmail_app_password=gmail_pass,
         to_address=notify_email,
         subject=subject,
-        body=body,
+        body_plain=plain_body,
         csv_data=csv_data,
         filename=csv_filename,
+        body_html=html_body,
     )
     log.info("Email sent.")
 

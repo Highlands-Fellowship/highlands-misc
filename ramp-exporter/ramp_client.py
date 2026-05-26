@@ -11,7 +11,7 @@ import requests
 
 RAMP_TOKEN_URL = "https://api.ramp.com/developer/v1/token"
 RAMP_TRANSACTIONS_URL = "https://api.ramp.com/developer/v1/transactions"
-RAMP_SYNC_URL = "https://api.ramp.com/developer/v1/accounting/sync"
+RAMP_SYNCS_URL = "https://api.ramp.com/developer/v1/accounting/syncs"
 
 
 def _get_token(client_id: str, client_secret: str, write: bool = False) -> str:
@@ -29,13 +29,21 @@ def _get_token(client_id: str, client_secret: str, write: bool = False) -> str:
 def mark_synced(client_id: str, client_secret: str, transaction_ids: list[str]) -> None:
     """Mark a list of transaction IDs as synced in Ramp."""
     import logging
+    import uuid
     log = logging.getLogger(__name__)
 
     token = _get_token(client_id, client_secret, write=True)
     resp = requests.post(
-        RAMP_SYNC_URL,
+        RAMP_SYNCS_URL,
         headers={"Authorization": f"Bearer {token}"},
-        json={"transaction_ids": transaction_ids},
+        json={
+            "idempotency_key": str(uuid.uuid4()),
+            "sync_type": "TRANSACTION_SYNC",
+            "successful_syncs": [
+                {"id": tid, "reference_id": tid}
+                for tid in transaction_ids
+            ],
+        },
         timeout=30,
     )
     if not resp.ok:
@@ -254,28 +262,35 @@ def dump_raw_transaction(
     client_id: str, client_secret: str, merchant: str | None = None
 ) -> tuple[dict | None, dict]:
     """
-    Return (first matching transaction, last page body) for inspection.
-    Targets SYNC_READY transactions so accounting_date is populated.
+    Return the oldest matching SYNC_READY transaction (same ordering as the export).
     Pass merchant (case-insensitive substring) to find a specific one.
     """
     token = _get_token(client_id, client_secret)
     params: dict = {"page_size": 100}
     next_url = None
+    candidates: list[dict] = []
+    last_body: dict = {}
 
     while True:
-        body = _get(token, params, url=next_url or RAMP_TRANSACTIONS_URL)
-        for tx in body.get("data", []):
+        last_body = _get(token, params, url=next_url or RAMP_TRANSACTIONS_URL)
+        for tx in last_body.get("data", []):
             if tx.get("sync_status") != "SYNC_READY":
                 continue
             if merchant:
                 name = (tx.get("merchant_name") or "").lower()
                 if merchant.lower() not in name:
                     continue
-            return tx, body
+            candidates.append(tx)
 
-        next_url = body.get("page", {}).get("next")
+        next_url = last_body.get("page", {}).get("next")
         if not next_url:
             break
         params = {}
 
-    return None, body
+    if not candidates:
+        return None, last_body
+
+    candidates.sort(
+        key=lambda t: t.get("accounting_date") or t.get("user_transaction_time") or ""
+    )
+    return candidates[0], last_body
