@@ -287,8 +287,14 @@ def dump_raw_reimbursement(
     client_id: str,
     client_secret: str,
     employee: str | None = None,
+    any_status: bool = False,
 ) -> tuple[dict | None, dict]:
-    """Return the oldest matching SYNC_READY reimbursement (same ordering as the export)."""
+    """Return the oldest matching reimbursement for inspection.
+
+    By default only returns SYNC_READY reimbursements (same filter as the export).
+    Pass any_status=True to include already-synced reimbursements — useful for
+    re-running an export after reimbursements have already been marked synced.
+    """
     token = _get_token(client_id, client_secret)
     params: dict = {"page_size": 100}
     next_url = None
@@ -298,7 +304,7 @@ def dump_raw_reimbursement(
     while True:
         last_body = _get(token, params, url=next_url or RAMP_REIMBURSEMENTS_URL)
         for reimb in last_body.get("data", []):
-            if reimb.get("sync_status") != "SYNC_READY":
+            if not any_status and reimb.get("sync_status") != "SYNC_READY":
                 continue
             if employee:
                 full_name = (reimb.get("user_full_name") or "").lower()

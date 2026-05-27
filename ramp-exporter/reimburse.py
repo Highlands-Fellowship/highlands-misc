@@ -5,6 +5,7 @@ Usage:
   python reimburse.py                                    # normal run
   python reimburse.py --dry-run                          # build CSV, skip email + state
   python reimburse.py --dump-raw                         # print raw JSON for first SYNC_READY reimbursement
+  python reimburse.py --dump-raw --any-status            # include already-synced reimbursements in --dump-raw
   python reimburse.py --date-from 2026-01-01             # pull from a specific date (ignores state)
   python reimburse.py --limit 1                          # cap export at N reimbursements (for test imports)
   python reimburse.py --mark-synced-ids ID1 ID2 ...      # mark specific IDs synced in Ramp without re-exporting
@@ -70,6 +71,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--dump-raw", action="store_true")
     parser.add_argument("--employee", metavar="NAME", help="filter --dump-raw by employee name (substring)")
+    parser.add_argument("--any-status", action="store_true", help="with --dump-raw: include already-synced reimbursements")
     parser.add_argument("--date-from", metavar="YYYY-MM-DD")
     parser.add_argument("--limit", metavar="N", type=int, help="cap export at N reimbursements")
     parser.add_argument("--mark-synced", action="store_true", help="mark exported reimbursements as synced in Ramp after emailing")
@@ -90,11 +92,12 @@ def main() -> None:
     if args.dump_raw:
         import pprint
         reimb, full_body = reimbursement_client.dump_raw_reimbursement(
-            client_id, client_secret, employee=args.employee
+            client_id, client_secret, employee=args.employee, any_status=args.any_status
         )
         if reimb is None:
             hint = f" matching '{args.employee}'" if args.employee else ""
-            print(f"No SYNC_READY reimbursement found{hint}.")
+            status_hint = " (any sync status)" if args.any_status else " (SYNC_READY only — try --any-status to include synced reimbursements)"
+            print(f"No reimbursement found{hint}{status_hint}.")
         else:
             print("=== Reimbursement (raw) ===")
             pprint.pprint(reimb)
