@@ -1,8 +1,8 @@
 # Ramp -> Sage 50 Exporter
 
-Pulls card transactions and reimbursements from the Ramp API, produces Sage 50-compatible CSVs, and emails them as branded HTML attachments. Runs on a schedule via Windows Task Scheduler.
+Pulls card transactions, reimbursements, and bill payments from the Ramp API, produces Sage 50-compatible CSVs, and emails them as branded HTML attachments. Runs on a schedule via Windows Task Scheduler.
 
-This replaces a manual workflow: export CSV from Ramp's UI -> run an Excel macro (`FillDistributions.bas`) to fill missing fields -> import into Sage 50.
+This replaces a manual workflow: export CSV from Ramp's UI → run an Excel macro (`FillDistributions.bas`) to fill missing fields → import into Sage 50.
 
 ---
 
@@ -37,8 +37,8 @@ Fixed values (Highlands Fellowship specific): Ship-to address, AP account `2104-
 ### Running
 
 ```powershell
-# Full run
-python main.py
+# Full run (emails CSV, updates exported_ids.json, marks synced in Ramp)
+python main.py --mark-synced
 
 # Dry run — builds CSV, skips email and state update
 python main.py --dry-run
@@ -51,9 +51,12 @@ python main.py --dry-run --limit 1
 
 # Inspect raw API data for a specific merchant
 python main.py --dump-raw --merchant "Amazon"
+
+# Mark specific IDs as synced without re-exporting (recovery)
+python main.py --mark-synced-ids ID1 ID2 ID3
 ```
 
-Import into Sage 50 via: **File -> Select Import/Export -> Accounts Payable -> Purchases Journal -> Import**
+Import into Sage 50 via: **File → Select Import/Export → Accounts Payable → Purchases Journal → Import**
 
 ---
 
@@ -63,9 +66,13 @@ Import into Sage 50 via: **File -> Select Import/Export -> Accounts Payable -> P
 
 1. Fetches all reimbursements with `sync_status = SYNC_READY`.
 2. Skips any reimbursement missing a **G/L Account** and logs a warning.
-3. Builds a Sage 50 **General Journal** CSV with two rows per reimbursement:
-   - **Debit**: expense G/L account for the reimbursement amount
-   - **Credit**: ACH clearing account (configurable via `REIMBURSEMENT_CLEARING_ACCOUNT`, default `2200-00`)
+3. Builds a Sage 50 **General Journal** CSV with **four rows per reimbursement** (two journal entries):
+   - **Expense entry** (dated `accounting_date`):
+     - Debit: expense G/L account for each line item amount
+     - Credit: ACH clearing account (`REIMBURSEMENT_CLEARING_ACCOUNT`, default `2200`)
+   - **Payment entry** (dated `payment_processed_at`):
+     - Debit: ACH clearing account (`REIMBURSEMENT_CLEARING_ACCOUNT`, default `2200`)
+     - Credit: bank/cash account (`REIMBURSEMENT_BANK_ACCOUNT`, default `1003-AB`)
 4. Emails the CSV via branded HTML email.
 5. Records exported IDs in `exported_reimb_ids.json`.
 
@@ -73,18 +80,21 @@ Import into Sage 50 via: **File -> Select Import/Export -> Accounts Payable -> P
 
 | Sage 50 GJ column | Source |
 |---|---|
-| Date | `created_at` (falls back to `transaction_date`) |
+| Date (expense rows) | `accounting_date` (falls back to `transaction_date`) |
+| Date (payment rows) | `payment_processed_at` |
 | Reference | `Ramp Reimbursement` (fixed) |
-| Description | `Employee FirstName LastName - memo` |
-| G/L Account (debit row) | `accounting_field_selections[type=GL_ACCOUNT].external_code` |
-| G/L Account (credit row) | `REIMBURSEMENT_CLEARING_ACCOUNT` env var (default `2200-00`) |
-| Debit / Credit | Amount in dollars |
+| Description | `user_full_name - memo` (e.g. `Melissa Mcfarlane - Hotel stay`) |
+| G/L Account (expense debit) | `line_items[].accounting_field_selections[category_info.type=GL_ACCOUNT].external_code` |
+| G/L Account (expense credit) | `REIMBURSEMENT_CLEARING_ACCOUNT` env var (default `2200`) |
+| G/L Account (payment debit) | `REIMBURSEMENT_CLEARING_ACCOUNT` env var (default `2200`) |
+| G/L Account (payment credit) | `REIMBURSEMENT_BANK_ACCOUNT` env var (default `1003-AB`) |
+| Amount | Positive = debit, negative = credit (single Amount column) |
 
 ### Running
 
 ```powershell
-# Full run
-python reimburse.py
+# Full run (emails CSV, updates exported_reimb_ids.json, marks synced in Ramp)
+python reimburse.py --mark-synced
 
 # Dry run
 python reimburse.py --dry-run
@@ -97,9 +107,76 @@ python reimburse.py --dry-run --limit 1
 
 # Inspect raw API data for a specific employee
 python reimburse.py --dump-raw --employee "Stuart"
+
+# Mark specific IDs as synced without re-exporting (recovery)
+python reimburse.py --mark-synced-ids ID1 ID2
 ```
 
-Import into Sage 50 via: **File -> Select Import/Export -> General Journal Transactions -> Import**
+Import into Sage 50 via: **File → Select Import/Export → General Journal Transactions → Import**
+
+---
+
+## Bill Pay
+
+### How it works
+
+1. Fetches all bills with `sync_status = NOT_SYNCED` and `status_summary = PAYMENT_COMPLETED`.
+2. Skips any bill missing a **Vendor ID**, **invoice number**, or **G/L Account** and logs a warning.
+3. Builds **two CSVs**:
+   - **Purchases Journal** (`sage_bill_purchases_YYYYMMDD.csv`) — one row per line item, same 49-column format as card transactions. Invoice numbers come directly from Ramp (no auto-generation needed).
+   - **Payments Journal** (`sage_bill_payments_YYYYMMDD.csv`) — one row per bill recording the ACH/check payment.
+4. Emails both CSVs as attachments via branded HTML email.
+5. Records exported bill IDs in `exported_bill_ids.json`.
+
+### Field mapping — Purchases Journal
+
+| Sage 50 column | Source |
+|---|---|
+| Vendor ID | `vendor.remote_id` (falls back to `remote_code`, then `vendor.name`) |
+| Invoice/CM # | `invoice_number` (from Ramp — present on all bills) |
+| Date | `accounting_date` (falls back to `paid_at`, `issued_at`) |
+| G/L Account | `line_items[].accounting_field_selections[category_info.type=GL_ACCOUNT].external_code` |
+| Amount | `line_items[].amount.amount / minor_unit_conversion_rate` |
+| Accounting Department | `accounting_field_selections[type=DEPARTMENT].external_id` |
+| Number of Distributions | Count of line items on the bill |
+
+### Field mapping — Payments Journal
+
+| Sage 50 column | Source |
+|---|---|
+| Vendor ID | `vendor.remote_id` |
+| Check Number | `payment.customer_friendly_payment_id` |
+| Date | `payment.payment_date` (falls back to `payment.effective_date`, `paid_at`) |
+| Cash Account | `BILLPAY_CASH_ACCOUNT` env var (default `1000-AB`) |
+| Invoice Paid | `invoice_number` |
+| G/L Account (AP clearing) | `BILLPAY_AP_ACCOUNT` env var (default `2200`) |
+| Amount | Total bill amount |
+
+### Running
+
+```powershell
+# Full run (emails both CSVs, updates exported_bill_ids.json, marks synced in Ramp)
+python billpay.py --mark-synced
+
+# Dry run — builds both CSVs, skips email and state update
+python billpay.py --dry-run
+
+# Pull from a specific date (ignores exported_bill_ids.json)
+python billpay.py --dry-run --date-from 2026-05-01
+
+# Cap at N bills for test imports
+python billpay.py --dry-run --limit 1
+
+# Inspect raw API data for a specific vendor
+python billpay.py --dump-raw --vendor "Verizon"
+
+# Mark specific IDs as synced without re-exporting (recovery)
+python billpay.py --mark-synced-ids ID1 ID2
+```
+
+**Import order matters:**
+1. `sage_bill_purchases_*.csv` → **File → Select Import/Export → Accounts Payable → Purchases Journal → Import**
+2. `sage_bill_payments_*.csv` → **File → Select Import/Export → Accounts Payable → Payments Journal → Import**
 
 ---
 
@@ -121,29 +198,47 @@ RAMP_CLIENT_SECRET=...                 # From Ramp developer portal
 GMAIL_USER=...                         # Gmail address to send from
 GMAIL_APP_PASSWORD=...                 # Gmail App Password (not your account password)
 NOTIFY_EMAIL=...                       # Who receives the CSVs
-REIMBURSEMENT_CLEARING_ACCOUNT=...     # Optional, default 2200-00
 ```
 
-**Ramp API setup:** Go to Ramp Settings -> Developers -> Create an API app with the `transactions:read` and `reimbursements:read` scopes. Copy the client ID and secret into `.env`.
+Optional overrides (defaults shown):
+```
+REIMBURSEMENT_CLEARING_ACCOUNT=2200    # ACH clearing account for reimbursements
+REIMBURSEMENT_BANK_ACCOUNT=1003-AB     # Bank account debited on reimbursement payment
+BILLPAY_CASH_ACCOUNT=1000-AB           # Bank account debited on bill payment
+BILLPAY_AP_ACCOUNT=2200                # AP clearing account for bill payments
+```
 
-**Gmail App Password:** Google Account -> Security -> 2-Step Verification -> App passwords. For a Google Workspace shared mailbox, use the admin console to enable 2SV and generate an App Password for that account.
+**Ramp API setup:** Go to Ramp Settings → Developers → Create an API app with the `transactions:read`, `reimbursements:read`, and `bills:read` scopes. Copy the client ID and secret into `.env`.
 
-### 3. Verify API connections
+**Gmail App Password:** Google Account → Security → 2-Step Verification → App passwords.
+
+### 3. Enable Ramp API-based syncing (one-time)
+
+Before `--mark-synced` will work on any script, run this once to register Sage 50 as the accounting connection in Ramp:
+
+```
+python setup_accounting_connection.py
+```
+
+This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_name": "Sage 50"}`. Only needs to be done once per Ramp organization.
+
+### 4. Verify API connections
 
 ```
 python main.py --dump-raw
 python reimburse.py --dump-raw
+python billpay.py --dump-raw
 ```
 
-### 4. Schedule on Windows
+### 5. Schedule on Windows
 
-Run once from an elevated PowerShell prompt to register the daily Task Scheduler job:
+Run once from an elevated PowerShell prompt to register the daily Task Scheduler jobs:
 
 ```
 .\setup_task.ps1
 ```
 
-Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and `$RUN_HOUR` before running.
+Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, `$CARD_HOUR`, `$REIMB_HOUR`, and `$BILL_HOUR` before running. Each script runs with `--mark-synced` so exported transactions are automatically marked in Ramp.
 
 ---
 
@@ -153,16 +248,21 @@ Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and `$RUN_HOUR` befor
 |---|---|
 | `main.py` | Card transactions entry point |
 | `reimburse.py` | Reimbursements entry point |
+| `billpay.py` | Bill pay entry point |
 | `ramp_client.py` | Ramp API auth, card transaction fetch, validation |
 | `reimbursement_client.py` | Ramp API fetch for reimbursements, journal row expansion |
-| `sage_formatter.py` | Builds the Sage 50 vendor-invoice CSV |
+| `billpay_client.py` | Ramp API fetch for bills, purchase/payment row expansion |
+| `sage_formatter.py` | Builds the Sage 50 vendor-invoice CSV (used by card and bill pay) |
 | `reimbursement_formatter.py` | Builds the Sage 50 General Journal CSV |
-| `emailer.py` | Sends CSV as branded HTML email via Gmail |
+| `billpay_payment_formatter.py` | Builds the Sage 50 Payments Journal CSV |
+| `emailer.py` | Sends CSV(s) as branded HTML email via Gmail |
 | `email_template.py` | Highlands Fellowship branded HTML email templates |
-| `setup_task.ps1` | Registers the Windows Task Scheduler job |
+| `setup_accounting_connection.py` | One-time Ramp accounting connection setup (run before --mark-synced) |
+| `setup_task.ps1` | Registers the Windows Task Scheduler jobs |
 | `.env.example` | Secrets template — copy to `.env` |
 | `exported_ids.json` | State file for card transaction IDs (auto-created) |
 | `exported_reimb_ids.json` | State file for reimbursement IDs (auto-created) |
+| `exported_bill_ids.json` | State file for bill IDs (auto-created) |
 | `output\` | Generated CSVs (auto-created) |
 | `logs\` | Daily log files (auto-created) |
 
@@ -170,19 +270,13 @@ Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and `$RUN_HOUR` befor
 
 ## Transactions skipped at export time
 
-Any SYNC_READY transaction missing required fields is skipped and logged — it will not appear in the CSV. It is also listed in the notification email with the reason.
+Any transaction missing required fields is skipped and logged — it will not appear in the CSV. It is also listed in the notification email with the reason. Skipped items are picked up automatically on the next run once fixed.
 
 | Warning | Fix in Ramp |
 |---|---|
-| `missing Vendor ID` | Open the transaction -> set the **Accounting Vendor** field |
-| `line item N missing G/L Account` | Open the transaction -> set the **Category/GL Account** for that split |
-| `missing G/L Account` (reimbursement) | Open the reimbursement -> set the **Category/GL Account** |
-
-Skipped items will be picked up automatically on the next run once fixed.
-
----
-
-## Deferred features
-
-- **Mark as synced in Ramp** — `--mark-synced` flag is implemented for card transactions; add same pattern to `reimburse.py` once reimbursement CSV output is validated in Sage
-- **Bill Pay** — same pattern as card transactions
+| `missing Vendor ID` | Open the transaction → set the **Accounting Vendor** field |
+| `line item N missing G/L Account` | Open the transaction → set the **Category/GL Account** for that split |
+| `missing G/L Account` (reimbursement) | Open the reimbursement → set the **Category/GL Account** |
+| `missing Vendor ID` (bill) | Open the bill → set the vendor's **Remote ID** in Ramp settings |
+| `missing invoice number` (bill) | Open the bill → add an invoice number |
+| `line item N missing G/L Account` (bill) | Open the bill → set the **GL Account** for that line item |

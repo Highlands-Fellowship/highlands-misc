@@ -4,73 +4,110 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project does
 
-Pulls card transactions from the Ramp API that are marked `SYNC_READY`, formats them as a Sage 50 vendor-invoice CSV, and emails the file via Gmail. Intended to run daily on Windows via Task Scheduler, replacing a manual Ramp UI export + Excel macro workflow.
+Pulls card transactions, reimbursements, and bill payments from the Ramp API, formats them as Sage 50-compatible CSVs, and emails the files via Gmail. Runs daily on Windows via Task Scheduler, replacing a manual Ramp UI export + Excel macro workflow.
 
-## Running the script
+Three independent entry points, each with its own state file and email:
+- `main.py` — card transactions → Sage 50 **Purchases Journal** (`sage_formatter.py`)
+- `reimburse.py` — reimbursements → Sage 50 **General Journal** (`reimbursement_formatter.py`)
+- `billpay.py` — bill payments → Sage 50 **Purchases Journal** + **Payments Journal** (`sage_formatter.py` + `billpay_payment_formatter.py`)
 
-```
-# Install dependencies (one-time)
-pip install -r requirements.txt
+## Running the scripts
 
-# Inspect raw Ramp API output for a transaction — do this first to verify field names
+```powershell
+# Inspect raw Ramp API output — do this first when verifying field names
 python main.py --dump-raw
+python reimburse.py --dump-raw --employee "LastName"
+python billpay.py --dump-raw --vendor "VendorName"
 
-# Test the full pipeline without sending email or updating state
+# Dry run — build CSV(s), skip email/state/sync
 python main.py --dry-run
+python reimburse.py --dry-run
+python billpay.py --dry-run
 
-# Pull transactions from a specific date (ignores exported_ids.json state)
-python main.py --dry-run --date-from 2026-01-01
+# Pull from a specific date (ignores state file)
+python main.py --dry-run --date-from 2026-05-01
 
-# Production run (emails CSV, updates exported_ids.json)
-python main.py
+# Production runs (email, state update, mark synced in Ramp)
+python main.py --mark-synced
+python reimburse.py --mark-synced
+python billpay.py --mark-synced
+
+# Recovery: mark specific IDs synced without re-exporting
+python main.py --mark-synced-ids ID1 ID2
+python reimburse.py --mark-synced-ids ID1
+python billpay.py --mark-synced-ids ID1
 ```
 
 ## Required `.env` file
 
-Copy `.env.example` to `.env`. Required keys:
-- `RAMP_CLIENT_ID` / `RAMP_CLIENT_SECRET` — OAuth2 client credentials from Ramp developer portal (Basic Auth on token endpoint, scope `transactions:read`)
-- `GMAIL_USER` / `GMAIL_APP_PASSWORD` — Gmail app password (not account password)
-- `NOTIFY_EMAIL` — recipient for the CSV attachment
+Copy `.env.example` to `.env`. Required keys: `RAMP_CLIENT_ID`, `RAMP_CLIENT_SECRET`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `NOTIFY_EMAIL`. Optional: `OUTPUT_DIR`, `REIMBURSEMENT_CLEARING_ACCOUNT` (default `2200`), `REIMBURSEMENT_BANK_ACCOUNT` (default `1003-AB`), `BILLPAY_CASH_ACCOUNT` (default `1000-AB`), `BILLPAY_AP_ACCOUNT` (default `2200`).
 
-Optional: `OUTPUT_DIR` (defaults to `./output/`)
+## One-time setup: Ramp accounting connection
+
+Before `--mark-synced` works on any script, run once:
+```
+python setup_accounting_connection.py
+```
+This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_name": "Sage 50"}`. Without this, the sync endpoint returns a 400 `DEVELOPER_7089` error.
 
 ## Architecture
 
-**Data flow:** `main.py` → `ramp_client.py` → `sage_formatter.py` → `emailer.py`
+### Ramp API patterns (shared across all three pipelines)
 
-**`ramp_client.py`** handles all Ramp API interaction:
-- OAuth2 client credentials via Basic Auth (`auth=(id, secret)` on POST to `/developer/v1/token`)
-- Paginates `GET /developer/v1/transactions` — Ramp's `page.next` is a full URL, so subsequent pages are fetched by URL directly (not as a query parameter)
-- Filters client-side on `sync_status == "SYNC_READY"` (no server-side filter exists for this)
-- `from_date` must be a full ISO datetime (`2026-01-01T00:00:00Z`), not just a date
-- Each transaction is expanded into one dict per `line_item` — these become Sage distribution rows
-- `num_distributions` = `len(line_items)`, `dist_number` = 1-based index within the transaction
-- Invoice numbers generated as `VendorName.MM.DD.YYYY`; same vendor+date gets `-2`, `-3` suffix
+- **Auth:** OAuth2 client credentials — `POST /developer/v1/token` with `auth=(client_id, client_secret)`. Separate token calls for read-only vs. write (scope includes `accounting:write` when `--mark-synced`).
+- **Pagination:** `page.next` in the response body is either a full URL or a cursor string. All three clients handle both forms.
+- **Sync endpoint:** `POST /developer/v1/accounting/syncs` (plural, not `/sync`). Body requires `idempotency_key` (UUID), `sync_type` (`TRANSACTION_SYNC` / `REIMBURSEMENT_SYNC` / `BILL_SYNC`), and `successful_syncs[{id, reference_id}]`.
+- `from_date` params must be full ISO datetimes (`2026-01-01T00:00:00Z`), not date-only strings.
 
-**Key Ramp API field mapping** (confirmed from live data):
-- Vendor ID → `accounting_field_selections[type="MERCHANT"].external_id`
-- GL Account code → `line_items[].accounting_field_selections[type="GL_ACCOUNT"].external_code` (use `external_code`, not `external_id`)
-- Department → `card_holder.department_name`
-- Amount → `line_items[].amount.amount / minor_unit_conversion_rate` (stored in cents)
-- Top-level `amount` field is already in dollars; line item amounts are in minor units
+### Card transactions (`ramp_client.py` → `sage_formatter.py`)
 
-**`sage_formatter.py`** maps pre-computed row dicts to the 49-column Sage 50 vendor-invoice CSV. Fixed values specific to Highlands Fellowship (ship-to address, AP account `2104-AB`, etc.) are in the `_FIXED` dict. No grouping logic — distributions are already computed by `ramp_client`.
+- Filters client-side: `sync_status == "SYNC_READY"` (no server-side filter available)
+- Key field locations (confirmed from live data):
+  - Vendor ID: `accounting_field_selections[type="MERCHANT"].external_id`
+  - GL Account: `line_items[].accounting_field_selections[type="GL_ACCOUNT"].external_code` (use `external_code`, not `external_id`)
+  - Department: `card_holder.department_name`
+  - Amount: `line_items[].amount.amount / minor_unit_conversion_rate` (minor units)
+  - Date: `accounting_date` → `user_transaction_time`
+- Invoice numbers auto-generated as `VendorName.MM.DD.YYYY`; same vendor+date gets `-2`, `-3` suffix
+- State file: `exported_ids.json`
 
-**`exported_ids.json`** — state file tracking Ramp transaction IDs already exported. Prevents duplicates on subsequent runs. Skipped when `--date-from` is passed.
+### Reimbursements (`reimbursement_client.py` → `reimbursement_formatter.py`)
 
-## Reimbursements
+- Filters: `sync_status == "SYNC_READY"` on `GET /developer/v1/reimbursements`
+- Key field locations (confirmed from live data):
+  - Employee name: `user_full_name` (top-level string — `employee.first_name/last_name` are `None`)
+  - GL Account: `line_items[].accounting_field_selections[category_info.type="GL_ACCOUNT"].external_code` (type is under `category_info`, not at top level)
+  - Expense date: `accounting_date` → `transaction_date` → `created_at`
+  - Payment date: `payment_processed_at`
+- **4 rows per reimbursement** (two journal entries, `row_role` field drives account substitution):
+  - `expense_debit` — expense GL, positive amount, dated `accounting_date`
+  - `expense_credit` — clearing account (`REIMBURSEMENT_CLEARING_ACCOUNT`), negative, dated `accounting_date`
+  - `payment_debit` — clearing account, positive, dated `payment_processed_at`
+  - `payment_credit` — bank account (`REIMBURSEMENT_BANK_ACCOUNT`), negative, dated `payment_processed_at`
+- 14-column General Journal CSV: single `Amount` column (positive=debit, negative=credit)
+- State file: `exported_reimb_ids.json`
 
-**`reimbursement_client.py`** fetches from `GET /developer/v1/reimbursements`, same pagination/filter pattern as card transactions. Scope: `reimbursements:read`. `fetch_sync_ready_reimbursements` returns `(rows, skipped)`. Expands each reimbursement into two rows (debit/credit pair): `entry_type = "debit"` uses the expense G/L account, `entry_type = "credit"` uses `REIMBURSEMENT_CLEARING_ACCOUNT` env var (default `2200-00`). Date: `created_at` fallback to `transaction_date`.
+### Bill pay (`billpay_client.py` → `sage_formatter.py` + `billpay_payment_formatter.py`)
 
-**`reimbursement_formatter.py`** builds a 13-column Sage 50 General Journal CSV (Date, Reference, Description, G/L Account, Debit, Credit, plus fixed metadata columns). Debit rows get a positive Amount in the Debit column; credit rows get a positive Amount in the Credit column. Reference is fixed as "Ramp Reimbursement".
+- Filters: `sync_status == "NOT_SYNCED"` AND `status_summary == "PAYMENT_COMPLETED"` (bills have no `SYNC_READY` status)
+- Key field locations (confirmed from live data):
+  - Vendor ID: `vendor.remote_id` → `vendor.remote_code` → `vendor.name`
+  - Invoice number: `invoice_number` (always present — no generation needed)
+  - GL Account: `line_items[].accounting_field_selections` — check BOTH `sel.get("type")` and `sel.get("category_info", {}).get("type")` for `"GL_ACCOUNT"` (bills may store it under either)
+  - Department: top-level `accounting_field_selections[type="DEPARTMENT"].external_id`
+  - Date: `accounting_date` → `paid_at` → `issued_at`
+  - Payment check number: `payment.customer_friendly_payment_id`
+  - Payment date: `payment.payment_date` → `payment.effective_date` → `paid_at`
+- `fetch_completed_bills` returns a 3-tuple `(purchase_rows, payment_rows, skipped)`
+- Purchase rows reuse `sage_formatter.build_csv()` (same 49-column format as card transactions)
+- Payment rows go to `billpay_payment_formatter.build_csv()` — 39-column Payments Journal CSV
+- Both CSVs emailed together as attachments; import Purchases first, then Payments
+- State file: `exported_bill_ids.json`
 
-**`reimburse.py`** entry point — same flags as `main.py` except `--employee` instead of `--merchant` for `--dump-raw` filter. State file: `exported_reimb_ids.json`.
+### Shared modules
 
-**`email_template.py`** — Highlands Fellowship branded HTML email. `build_card_email(count, gen_date, skipped)` and `build_reimbursement_email(count, gen_date, skipped)` both return `(html, plain_text)`. Skipped transactions appear in a yellow warning box; import path appears in a cream/teal box.
+**`sage_formatter.py`** — 49-column Sage 50 vendor-invoice CSV. `_FIXED` dict holds Highlands Fellowship constants (ship-to address, AP account `2104-AB`, etc.). No grouping logic — distributions pre-computed by client modules.
 
-**`emailer.py`** — `send_csv` now accepts optional `body_html` param. When provided, sends `multipart/mixed` with a `multipart/alternative` inner part (plain + HTML) plus the CSV attachment.
+**`emailer.py`** — `send_csv(gmail_user, gmail_app_password, to_address, subject, body_plain, csv_data, filename, body_html=None, extra_attachments=None)`. Sends `multipart/mixed` with `multipart/alternative` inner part (plain + HTML) plus one or more CSV attachments. `extra_attachments` is a list of `(csv_data, filename)` tuples.
 
-## Deferred features
-
-- Marking reimbursements as synced in Ramp — add same `--mark-synced` pattern from `main.py` once reimbursement CSV output is validated against Sage
-- Bill Pay transaction type — same structure as card transactions
+**`email_template.py`** — Highlands Fellowship branded HTML. Three builders: `build_card_email`, `build_reimbursement_email`, `build_billpay_email`. All return `(html, plain_text)`. Import path shown in cream/teal box; skipped transactions in yellow warning box.
