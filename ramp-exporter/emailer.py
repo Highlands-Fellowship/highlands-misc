@@ -11,7 +11,7 @@ from email import encoders
 def send_csv(
     gmail_user: str,
     gmail_app_password: str,
-    to_address: str,
+    to_address: str | list[str],
     subject: str,
     body_plain: str,
     csv_data: str,
@@ -21,12 +21,14 @@ def send_csv(
 ) -> None:
     """Send an email with one or more CSV attachments.
 
+    to_address may be a single address string or a list of addresses.
     extra_attachments is an optional list of (csv_data, filename) tuples
     for additional files beyond the primary csv_data/filename pair.
     """
+    recipients = [to_address] if isinstance(to_address, str) else to_address
     outer = MIMEMultipart("mixed")
     outer["From"] = gmail_user
-    outer["To"] = to_address
+    outer["To"] = ", ".join(recipients)
     outer["Subject"] = subject
 
     if body_html:
@@ -47,4 +49,4 @@ def send_csv(
     context = ssl.create_default_context()
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
         server.login(gmail_user, gmail_app_password)
-        server.sendmail(gmail_user, to_address, outer.as_string())
+        server.sendmail(gmail_user, recipients, outer.as_string())

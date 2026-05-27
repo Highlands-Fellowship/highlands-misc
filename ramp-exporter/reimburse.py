@@ -108,7 +108,7 @@ def main() -> None:
 
     gmail_user = _require_env("GMAIL_USER")
     gmail_pass = _require_env("GMAIL_APP_PASSWORD")
-    notify_email = _require_env("NOTIFY_EMAIL")
+    notify_email = [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
 
     exported_ids = _load_exported_ids() if not args.date_from else set()
 
