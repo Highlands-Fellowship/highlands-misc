@@ -68,7 +68,7 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
   - Department: `card_holder.department_name`
   - Amount: `line_items[].amount.amount / minor_unit_conversion_rate` (minor units)
   - Date: `accounting_date` → `user_transaction_time`
-- Invoice numbers auto-generated as `VendorName.MM.DD.YYYY`; same vendor+date gets `-2`, `-3` suffix
+- Invoice numbers auto-generated as `VendorName.MM.DD.YYYY.xxxxxx` (last 6 chars of `tx["id"]`); stable across export runs — same transaction always produces the same invoice number
 - State file: `exported_ids.json`
 
 ### Reimbursements (`reimbursement_client.py` → `reimbursement_formatter.py`)

@@ -238,7 +238,6 @@ def _assign_invoices_and_expand(txns: list[dict]) -> tuple[list[dict], list[dict
         key=lambda t: t.get("accounting_date") or t.get("user_transaction_time") or "",
     )
 
-    vendor_date_counter: dict[str, int] = {}
     rows: list[dict] = []
     skipped: list[dict] = []
 
@@ -254,12 +253,11 @@ def _assign_invoices_and_expand(txns: list[dict]) -> tuple[list[dict], list[dict
         vendor = _vendor_id(tx)
         date_str = _format_date(tx.get("accounting_date") or tx.get("user_transaction_time") or "")
         date_dots = date_str.replace("/", ".")
-        base_invoice = f"{vendor}.{date_dots}"
-
-        vd_key = f"{vendor}|{date_str}"
-        vendor_date_counter[vd_key] = vendor_date_counter.get(vd_key, 0) + 1
-        n = vendor_date_counter[vd_key]
-        invoice = base_invoice if n == 1 else f"{base_invoice}-{n}"
+        # Append the last 6 chars of the Ramp transaction ID so the invoice number
+        # is unique across export runs. Same transaction always produces the same
+        # invoice number; multi-line distributions share it (same tx["id"]).
+        short_id = tx["id"][-6:]
+        invoice = f"{vendor}.{date_dots}.{short_id}"
 
         rows.extend(_expand_transaction(tx, invoice))
 

@@ -28,7 +28,7 @@ This replaces a manual workflow: export CSV from Ramp's UI → run an Excel macr
 | G/L Account | `line_items[].accounting_field_selections[type=GL_ACCOUNT].external_code` |
 | Amount | `line_items[].amount.amount / minor_unit_conversion_rate` |
 | Accounting Department | `card_holder.department_name` |
-| Invoice/CM # | Auto-generated as `VendorName.MM.DD.YYYY` (suffix `-2`, `-3` if same vendor has multiple transactions on the same date) |
+| Invoice/CM # | Auto-generated as `VendorName.MM.DD.YYYY.xxxxxx` where `xxxxxx` is the last 6 chars of the Ramp transaction ID — unique across all export runs |
 | Number of Distributions | Count of line items on the transaction |
 | Invoice/CM Distribution | 1-based index of the line item within the transaction |
 
