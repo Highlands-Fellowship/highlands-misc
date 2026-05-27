@@ -271,59 +271,31 @@ def fetch_completed_bills(
 
 
 def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None:
-    """Mark a list of bill IDs as synced in Ramp."""
+    """Mark a list of bill IDs as synced in Ramp (BILL_SYNC + BILL_PAYMENT_SYNC)."""
     import uuid
     log = logging.getLogger(__name__)
     token = _get_token(client_id, client_secret, write=True)
-    resp = requests.post(
-        RAMP_SYNCS_URL,
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "idempotency_key": str(uuid.uuid4()),
-            "sync_type": "BILL_SYNC",
-            "successful_syncs": [
-                {"id": bid, "reference_id": bid}
-                for bid in bill_ids
-            ],
-        },
-        timeout=30,
-    )
-    if not resp.ok:
-        raise RuntimeError(
-            f"Ramp sync API {resp.status_code}\n"
-            f"body: {resp.text}"
-        )
-    log.info("Marked %d bill(s) as synced in Ramp.", len(bill_ids))
 
-
-def mark_payments_synced(client_id: str, client_secret: str, payment_ids: list[str]) -> None:
-    """Mark a list of bill payment IDs as synced in Ramp."""
-    import uuid
-    log = logging.getLogger(__name__)
-    payment_ids = [pid for pid in payment_ids if pid]
-    if not payment_ids:
-        log.info("No payment IDs to mark synced.")
-        return
-    token = _get_token(client_id, client_secret, write=True)
-    resp = requests.post(
-        RAMP_SYNCS_URL,
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "idempotency_key": str(uuid.uuid4()),
-            "sync_type": "BILL_PAYMENT_SYNC",
-            "successful_syncs": [
-                {"id": pid, "reference_id": pid}
-                for pid in payment_ids
-            ],
-        },
-        timeout=30,
-    )
-    if not resp.ok:
-        raise RuntimeError(
-            f"Ramp payment sync API {resp.status_code}\n"
-            f"body: {resp.text}"
+    for sync_type in ("BILL_SYNC", "BILL_PAYMENT_SYNC"):
+        resp = requests.post(
+            RAMP_SYNCS_URL,
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "idempotency_key": str(uuid.uuid4()),
+                "sync_type": sync_type,
+                "successful_syncs": [
+                    {"id": bid, "reference_id": bid}
+                    for bid in bill_ids
+                ],
+            },
+            timeout=30,
         )
-    log.info("Marked %d payment(s) as synced in Ramp.", len(payment_ids))
+        if not resp.ok:
+            raise RuntimeError(
+                f"Ramp sync API ({sync_type}) {resp.status_code}\n"
+                f"body: {resp.text}"
+            )
+        log.info("[%s] Marked %d bill(s) as synced in Ramp.", sync_type, len(bill_ids))
 
 
 def dump_raw_bill(

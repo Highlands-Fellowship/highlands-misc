@@ -79,8 +79,7 @@ def main() -> None:
     parser.add_argument("--date-from", metavar="YYYY-MM-DD")
     parser.add_argument("--limit", metavar="N", type=int, help="cap export at N bills")
     parser.add_argument("--mark-synced", action="store_true", help="mark exported bills and payments as synced in Ramp after emailing")
-    parser.add_argument("--mark-synced-ids", metavar="ID", nargs="+", help="mark specific bill IDs as synced without re-exporting")
-    parser.add_argument("--mark-payment-synced-ids", metavar="ID", nargs="+", help="mark specific payment IDs as synced without re-exporting (use payment.id from --dump-raw --any-status)")
+    parser.add_argument("--mark-synced-ids", metavar="ID", nargs="+", help="mark specific bill IDs as synced (runs BILL_SYNC + BILL_PAYMENT_SYNC) without re-exporting")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -92,11 +91,6 @@ def main() -> None:
     if args.mark_synced_ids:
         log.info("Marking %d bill(s) as synced in Ramp...", len(args.mark_synced_ids))
         billpay_client.mark_synced(client_id, client_secret, args.mark_synced_ids)
-        return
-
-    if args.mark_payment_synced_ids:
-        log.info("Marking %d payment(s) as synced in Ramp...", len(args.mark_payment_synced_ids))
-        billpay_client.mark_payments_synced(client_id, client_secret, args.mark_payment_synced_ids)
         return
 
     if args.dump_raw:
@@ -214,9 +208,6 @@ def main() -> None:
         bill_ids = list({row["id"] for row in purchase_rows})
         log.info("Marking %d bill(s) as synced in Ramp...", len(bill_ids))
         billpay_client.mark_synced(client_id, client_secret, bill_ids)
-        payment_ids = list({row["payment_id"] for row in payment_rows if row.get("payment_id")})
-        log.info("Marking %d payment(s) as synced in Ramp...", len(payment_ids))
-        billpay_client.mark_payments_synced(client_id, client_secret, payment_ids)
 
 
 if __name__ == "__main__":
