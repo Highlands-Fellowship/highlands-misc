@@ -294,7 +294,12 @@ def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None
             # DEVELOPER_7062 means one or more objects are already synced — safe to
             # skip for BILL_SYNC and proceed to BILL_PAYMENT_SYNC (e.g. recovery runs).
             try:
-                error_code = resp.json().get("error_code", "")
+                body = resp.json()
+                error_code = (
+                    body.get("error_code")
+                    or (body.get("error_v2") or {}).get("error_code")
+                    or ""
+                )
             except Exception:
                 error_code = ""
             if sync_type == "BILL_SYNC" and error_code == "DEVELOPER_7062":
