@@ -84,6 +84,15 @@ def _get(token: str, params: dict, url: str = RAMP_REIMBURSEMENTS_URL) -> dict:
     return resp.json()
 
 
+def _clean_text(s: str) -> str:
+    """Replace newlines and carriage returns with a space.
+
+    Sage 50's CSV importer does not handle embedded newlines in quoted fields —
+    it treats them as record separators and fails with a Date parse error.
+    """
+    return s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
+
+
 def _format_date(raw: str) -> str:
     if not raw:
         return ""
@@ -134,8 +143,8 @@ def _expand_reimbursement(reimb: dict) -> list[dict]:
     substitutes env-configured account codes at write time.
     """
     reimb_id = reimb["id"]
-    employee_name = (reimb.get("user_full_name") or "").strip()
-    memo = (reimb.get("memo") or "").strip()
+    employee_name = _clean_text(reimb.get("user_full_name") or "")
+    memo = _clean_text(reimb.get("memo") or "")
 
     # Expense rows use the original memo; payment rows use "Reimbursement - Name"
     expense_desc = memo or employee_name or "Ramp Reimbursement"

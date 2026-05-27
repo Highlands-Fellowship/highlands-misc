@@ -98,6 +98,14 @@ def _line_item_amount(item: dict) -> float:
     return float(amt)
 
 
+def _clean_text(s: str) -> str:
+    """Replace newlines/carriage returns with a space.
+
+    Sage 50's CSV importer does not handle embedded newlines in quoted fields.
+    """
+    return s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
+
+
 def _format_date(raw: str) -> str:
     try:
         dt = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
@@ -115,7 +123,7 @@ def _expand_transaction(tx: dict, invoice: str) -> list[dict]:
     first = (holder.get("first_name") or "").strip()
     last = (holder.get("last_name") or "").strip()
     cardholder = f"{first} {last}".strip()
-    tx_memo = (tx.get("memo") or tx.get("merchant_name") or "").strip()
+    tx_memo = _clean_text(tx.get("memo") or tx.get("merchant_name") or "")
     if cardholder:
         tx_memo = f"{cardholder} - {tx_memo}" if tx_memo else cardholder
     department = holder.get("department_name") or ""
@@ -139,7 +147,7 @@ def _expand_transaction(tx: dict, invoice: str) -> list[dict]:
 
     rows = []
     for i, item in enumerate(line_items):
-        item_memo = (item.get("memo") or "").strip()
+        item_memo = _clean_text(item.get("memo") or "")
         if item_memo:
             memo = f"{cardholder} - {item_memo}" if cardholder else item_memo
         else:

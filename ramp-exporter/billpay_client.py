@@ -53,6 +53,14 @@ def _get(token: str, params: dict, url: str = RAMP_BILLS_URL) -> dict:
     return resp.json()
 
 
+def _clean_text(s: str) -> str:
+    """Replace newlines/carriage returns with a space.
+
+    Sage 50's CSV importer does not handle embedded newlines in quoted fields.
+    """
+    return s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
+
+
 def _format_date(raw: str) -> str:
     if not raw:
         return ""
@@ -139,7 +147,7 @@ def _expand_payment(bill: dict) -> dict:
     else:
         total = float(amt_obj)
 
-    memo = (bill.get("memo") or bill.get("vendor_memo") or "").strip()
+    memo = _clean_text(bill.get("memo") or bill.get("vendor_memo") or "")
 
     return {
         "id": bill["id"],
@@ -166,13 +174,13 @@ def _expand_bill(bill: dict) -> list[dict]:
         or ""
     )
     date_str = _format_date(raw_date)
-    memo = (bill.get("memo") or bill.get("vendor_memo") or "").strip()
+    memo = _clean_text(bill.get("memo") or bill.get("vendor_memo") or "")
     department = _department(bill)
     line_items = bill.get("line_items") or []
 
     rows = []
     for i, item in enumerate(line_items):
-        item_memo = (item.get("memo") or "").strip()
+        item_memo = _clean_text(item.get("memo") or "")
         rows.append({
             "id": bill["id"],
             "vendor_id": vendor_id,
