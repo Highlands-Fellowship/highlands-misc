@@ -291,6 +291,15 @@ def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None
             timeout=30,
         )
         if not resp.ok:
+            # DEVELOPER_7062 means one or more objects are already synced — safe to
+            # skip for BILL_SYNC and proceed to BILL_PAYMENT_SYNC (e.g. recovery runs).
+            try:
+                error_code = resp.json().get("error_code", "")
+            except Exception:
+                error_code = ""
+            if sync_type == "BILL_SYNC" and error_code == "DEVELOPER_7062":
+                log.info("[%s] Bill(s) already synced, skipping.", sync_type)
+                continue
             raise RuntimeError(
                 f"Ramp sync API ({sync_type}) {resp.status_code}\n"
                 f"body: {resp.text}"
