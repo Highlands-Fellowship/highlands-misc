@@ -14,11 +14,11 @@ NEAR_BLACK = "#1A1A1A"
 
 LOGO_URL = (
     "https://res.cloudinary.com/hfchurch/image/upload"
-    "/h_48/Brand%20Guide%20Logos/hf-logo-mark-light.png"
+    "/h_96/Brand%20Guide%20Logos/hf-logo-mark-light.png"
 )
 WORDMARK_URL = (
     "https://res.cloudinary.com/hfchurch/image/upload"
-    "/h_24/Brand%20Guide%20Logos/hf-wordmark-light.png"
+    "/h_48/Brand%20Guide%20Logos/hf-wordmark-light.png"
 )
 
 _BASE = """<!DOCTYPE html>
