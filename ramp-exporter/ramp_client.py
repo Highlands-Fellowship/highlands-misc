@@ -247,7 +247,12 @@ def _assign_invoices_and_expand(txns: list[dict]) -> tuple[list[dict], list[dict
             merchant = tx.get("merchant_name") or "unknown merchant"
             date_str = _format_date(tx.get("accounting_date") or tx.get("user_transaction_time") or "")
             log.warning("SKIPPED %s  %s  %s -- %s", tx["id"], merchant, date_str, "; ".join(errors))
-            skipped.append({"merchant": merchant, "date": date_str, "reasons": errors})
+            skipped.append({
+                "merchant": merchant,
+                "date": date_str,
+                "reasons": errors,
+                "ramp_url": f"https://app.ramp.com/details/list/transactions/{tx['id']}",
+            })
             continue
 
         vendor = _vendor_id(tx)

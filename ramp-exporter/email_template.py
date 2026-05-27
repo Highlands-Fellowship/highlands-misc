@@ -119,7 +119,9 @@ _SKIPPED_BOX = """
 
 _SKIPPED_ROW = (
     '<p style="margin:4px 0; font-size:13px; color:{near_black};">'
-    '<strong>{date}&nbsp;&nbsp;{merchant}</strong><br>'
+    '<strong>{date}&nbsp;&nbsp;{merchant}</strong>'
+    '&nbsp;&nbsp;<a href="{ramp_url}" style="font-size:11px; color:{teal}; '
+    'text-decoration:none;">Fix in Ramp &#8250;</a><br>'
     '<span style="color:{mid_gray}; font-size:12px;">{reasons}</span></p>'
 )
 
@@ -204,6 +206,7 @@ def _build(
                 date=s["date"],
                 merchant=s["merchant"],
                 reasons=" &bull; ".join(s["reasons"]),
+                ramp_url=s.get("ramp_url", ""),
                 **fmt,
             )
             for s in skipped
@@ -227,6 +230,8 @@ def _build(
         plain += f"\nWARNING: {len(skipped)} transaction(s) skipped:\n"
         for s in skipped:
             plain += f"  {s['date']}  {s['merchant']}\n"
+            if s.get("ramp_url"):
+                plain += f"    {s['ramp_url']}\n"
             for r in s["reasons"]:
                 plain += f"    - {r}\n"
     plain += f"\nGenerated: {gen_date}"

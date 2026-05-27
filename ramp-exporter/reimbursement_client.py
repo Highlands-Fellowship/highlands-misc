@@ -275,7 +275,12 @@ def fetch_sync_ready_reimbursements(
                 "SKIPPED %s  %s  %s -- %s",
                 reimb["id"], name, date_str, "; ".join(errors),
             )
-            skipped.append({"merchant": name, "date": date_str, "reasons": errors})
+            skipped.append({
+                "merchant": name,
+                "date": date_str,
+                "reasons": errors,
+                "ramp_url": f"https://app.ramp.com/details/list/reimbursements/{reimb['id']}",
+            })
             continue
 
         rows.extend(_expand_reimbursement(reimb))

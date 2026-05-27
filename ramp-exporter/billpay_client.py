@@ -269,7 +269,12 @@ def fetch_completed_bills(
                 "SKIPPED %s  %s  %s -- %s",
                 bill["id"], vendor, date_str, "; ".join(errors),
             )
-            skipped.append({"merchant": vendor, "date": date_str, "reasons": errors})
+            skipped.append({
+                "merchant": vendor,
+                "date": date_str,
+                "reasons": errors,
+                "ramp_url": f"https://app.ramp.com/details/list/bills/{bill['id']}",
+            })
             continue
 
         purchase_rows.extend(_expand_bill(bill))
