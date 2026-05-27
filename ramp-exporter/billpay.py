@@ -75,10 +75,12 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--dump-raw", action="store_true")
     parser.add_argument("--vendor", metavar="NAME", help="filter --dump-raw by vendor name (substring)")
+    parser.add_argument("--any-status", action="store_true", help="with --dump-raw: include already-synced bills (useful for inspecting payment structure)")
     parser.add_argument("--date-from", metavar="YYYY-MM-DD")
     parser.add_argument("--limit", metavar="N", type=int, help="cap export at N bills")
-    parser.add_argument("--mark-synced", action="store_true", help="mark exported bills as synced in Ramp after emailing")
+    parser.add_argument("--mark-synced", action="store_true", help="mark exported bills and payments as synced in Ramp after emailing")
     parser.add_argument("--mark-synced-ids", metavar="ID", nargs="+", help="mark specific bill IDs as synced without re-exporting")
+    parser.add_argument("--mark-payment-synced-ids", metavar="ID", nargs="+", help="mark specific payment IDs as synced without re-exporting (use payment.id from --dump-raw --any-status)")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -92,14 +94,20 @@ def main() -> None:
         billpay_client.mark_synced(client_id, client_secret, args.mark_synced_ids)
         return
 
+    if args.mark_payment_synced_ids:
+        log.info("Marking %d payment(s) as synced in Ramp...", len(args.mark_payment_synced_ids))
+        billpay_client.mark_payments_synced(client_id, client_secret, args.mark_payment_synced_ids)
+        return
+
     if args.dump_raw:
         import pprint
         bill, _ = billpay_client.dump_raw_bill(
-            client_id, client_secret, vendor=args.vendor
+            client_id, client_secret, vendor=args.vendor, any_status=args.any_status
         )
         if bill is None:
             hint = f" matching '{args.vendor}'" if args.vendor else ""
-            print(f"No PAYMENT_COMPLETED/NOT_SYNCED bill found{hint}.")
+            status_hint = " (any sync status)" if args.any_status else " (NOT_SYNCED only — try --any-status to include synced bills)"
+            print(f"No PAYMENT_COMPLETED bill found{hint}{status_hint}.")
         else:
             print("=== Bill (raw) ===")
             pprint.pprint(bill)
@@ -112,6 +120,8 @@ def main() -> None:
                 pprint.pprint(item)
             print("\n=== vendor ===")
             pprint.pprint(bill.get("vendor"))
+            print("\n=== payment ===")
+            pprint.pprint(bill.get("payment"))
         return
 
     gmail_user = _require_env("GMAIL_USER")
@@ -204,6 +214,9 @@ def main() -> None:
         bill_ids = list({row["id"] for row in purchase_rows})
         log.info("Marking %d bill(s) as synced in Ramp...", len(bill_ids))
         billpay_client.mark_synced(client_id, client_secret, bill_ids)
+        payment_ids = list({row["payment_id"] for row in payment_rows if row.get("payment_id")})
+        log.info("Marking %d payment(s) as synced in Ramp...", len(payment_ids))
+        billpay_client.mark_payments_synced(client_id, client_secret, payment_ids)
 
 
 if __name__ == "__main__":

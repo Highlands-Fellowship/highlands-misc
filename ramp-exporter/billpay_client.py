@@ -143,6 +143,7 @@ def _expand_payment(bill: dict) -> dict:
 
     return {
         "id": bill["id"],
+        "payment_id": (payment.get("id") or "").strip(),
         "vendor_id": _vendor_id(bill),
         "vendor_name": (vendor.get("name") or vendor.get("remote_name") or "").strip(),
         "check_number": (payment.get("customer_friendly_payment_id") or "").strip(),
@@ -295,12 +296,49 @@ def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None
     log.info("Marked %d bill(s) as synced in Ramp.", len(bill_ids))
 
 
+def mark_payments_synced(client_id: str, client_secret: str, payment_ids: list[str]) -> None:
+    """Mark a list of bill payment IDs as synced in Ramp."""
+    import uuid
+    log = logging.getLogger(__name__)
+    # Filter out any blank IDs (bills without a payment sub-object)
+    payment_ids = [pid for pid in payment_ids if pid]
+    if not payment_ids:
+        log.info("No payment IDs to mark synced.")
+        return
+    token = _get_token(client_id, client_secret, write=True)
+    resp = requests.post(
+        RAMP_SYNCS_URL,
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "idempotency_key": str(uuid.uuid4()),
+            "sync_type": "PAYMENT_SYNC",
+            "successful_syncs": [
+                {"id": pid, "reference_id": pid}
+                for pid in payment_ids
+            ],
+        },
+        timeout=30,
+    )
+    if not resp.ok:
+        raise RuntimeError(
+            f"Ramp payment sync API {resp.status_code}\n"
+            f"body: {resp.text}"
+        )
+    log.info("Marked %d payment(s) as synced in Ramp.", len(payment_ids))
+
+
 def dump_raw_bill(
     client_id: str,
     client_secret: str,
     vendor: str | None = None,
+    any_status: bool = False,
 ) -> tuple[dict | None, dict]:
-    """Return the oldest matching NOT_SYNCED/PAYMENT_COMPLETED bill for inspection."""
+    """Return the oldest matching PAYMENT_COMPLETED bill for inspection.
+
+    By default only returns NOT_SYNCED bills (same filter as the normal export).
+    Pass any_status=True to include already-synced bills — useful for inspecting
+    the payment sub-object structure after a bill has been marked synced.
+    """
     token = _get_token(client_id, client_secret)
     params: dict = {"page_size": 100}
     candidates: list[dict] = []
@@ -317,7 +355,7 @@ def dump_raw_bill(
             last_body = _get(token, params)
 
         for bill in last_body.get("data", []):
-            if bill.get("sync_status") != "NOT_SYNCED":
+            if not any_status and bill.get("sync_status") != "NOT_SYNCED":
                 continue
             if bill.get("status_summary") != "PAYMENT_COMPLETED":
                 continue
