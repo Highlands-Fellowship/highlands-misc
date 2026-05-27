@@ -143,6 +143,27 @@ def build_card_email(
     )
 
 
+def build_billpay_email(
+    count: int,
+    gen_date: str,
+    skipped: list[dict],
+) -> tuple[str, str]:
+    """Return (html, plain_text) for a bill payment export notification."""
+    import_path = (
+        "1. <strong>sage_bill_purchases_*.csv</strong> &rsaquo; "
+        "File &rsaquo; Select Import/Export &rsaquo; Accounts Payable &rsaquo; Purchases Journal &rsaquo; Import"
+        "<br>2. <strong>sage_bill_payments_*.csv</strong> &rsaquo; "
+        "File &rsaquo; Select Import/Export &rsaquo; Accounts Payable &rsaquo; Payments Journal &rsaquo; Import"
+    )
+    return _build(
+        heading="Bill Payments Ready for Import",
+        intro=f"{count} bill payment(s) are ready to import into Sage 50. Two files are attached.",
+        import_path=import_path,
+        gen_date=gen_date,
+        skipped=skipped,
+    )
+
+
 def build_reimbursement_email(
     count: int,
     gen_date: str,

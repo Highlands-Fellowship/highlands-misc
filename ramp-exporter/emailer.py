@@ -17,7 +17,13 @@ def send_csv(
     csv_data: str,
     filename: str,
     body_html: str | None = None,
+    extra_attachments: list[tuple[str, str]] | None = None,
 ) -> None:
+    """Send an email with one or more CSV attachments.
+
+    extra_attachments is an optional list of (csv_data, filename) tuples
+    for additional files beyond the primary csv_data/filename pair.
+    """
     outer = MIMEMultipart("mixed")
     outer["From"] = gmail_user
     outer["To"] = to_address
@@ -31,11 +37,12 @@ def send_csv(
     else:
         outer.attach(MIMEText(body_plain, "plain", "utf-8"))
 
-    part = MIMEBase("application", "octet-stream")
-    part.set_payload(csv_data.encode("utf-8"))
-    encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
-    outer.attach(part)
+    for data, name in [(csv_data, filename)] + list(extra_attachments or []):
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(data.encode("utf-8"))
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f'attachment; filename="{name}"')
+        outer.attach(part)
 
     context = ssl.create_default_context()
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:

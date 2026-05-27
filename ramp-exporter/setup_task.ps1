@@ -8,6 +8,7 @@ $SCRIPT_DIR   = "C:\ramp-exporter"
 $PYTHON_EXE   = "python"          # or full path e.g. C:\Python312\python.exe
 $CARD_HOUR    = 6                 # card transactions: 6 AM daily
 $REIMB_HOUR   = 6                 # reimbursements:    6 AM daily (can differ)
+$BILL_HOUR    = 6                 # bill payments:     6 AM daily (can differ)
 
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
@@ -48,11 +49,30 @@ Register-ScheduledTask `
     -Description "Daily Ramp reimbursement export to Sage 50" `
     -Force
 
+# --- Bill payments ---
+$billAction = New-ScheduledTaskAction `
+    -Execute $PYTHON_EXE `
+    -Argument "$SCRIPT_DIR\billpay.py --mark-synced" `
+    -WorkingDirectory $SCRIPT_DIR
+
+$billTrigger = New-ScheduledTaskTrigger -Daily -At "${BILL_HOUR}:00"
+
+Register-ScheduledTask `
+    -TaskName   "RampBillPayExport" `
+    -Action     $billAction `
+    -Trigger    $billTrigger `
+    -Settings   $settings `
+    -RunLevel   Highest `
+    -Description "Daily Ramp bill payment export to Sage 50" `
+    -Force
+
 Write-Host ""
 Write-Host "Tasks registered:"
 Write-Host "  RampCardExport          -- runs daily at ${CARD_HOUR}:00 AM"
 Write-Host "  RampReimbursementExport -- runs daily at ${REIMB_HOUR}:00 AM"
+Write-Host "  RampBillPayExport       -- runs daily at ${BILL_HOUR}:00 AM"
 Write-Host ""
 Write-Host "To test immediately:"
 Write-Host "  Start-ScheduledTask -TaskName 'RampCardExport'"
 Write-Host "  Start-ScheduledTask -TaskName 'RampReimbursementExport'"
+Write-Host "  Start-ScheduledTask -TaskName 'RampBillPayExport'"
