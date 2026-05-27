@@ -252,12 +252,14 @@ def _assign_invoices_and_expand(txns: list[dict]) -> tuple[list[dict], list[dict
 
         vendor = _vendor_id(tx)
         date_str = _format_date(tx.get("accounting_date") or tx.get("user_transaction_time") or "")
-        date_dots = date_str.replace("/", ".")
-        # Append the last 6 chars of the Ramp transaction ID so the invoice number
-        # is unique across export runs. Same transaction always produces the same
-        # invoice number; multi-line distributions share it (same tx["id"]).
-        short_id = tx["id"][-6:]
-        invoice = f"{vendor}.{date_dots}.{short_id}"
+        # Sage 50 Invoice/CM # field limit: 20 characters.
+        # Format: {vendor[:9]}.{MMDDYY}.{id[:3]}  = 9+1+6+1+3 = 20 chars max.
+        # The 3-char transaction ID suffix ensures uniqueness across export runs;
+        # same transaction always produces the same invoice number.
+        m, d, y = (date_str.split("/") + ["", "", ""])[:3]
+        date_compact = f"{m}{d}{y[2:]}"   # e.g. "050426" for 05/04/2026
+        short_id = tx["id"][-3:]
+        invoice = f"{vendor[:9]}.{date_compact}.{short_id}"
 
         rows.extend(_expand_transaction(tx, invoice))
 
