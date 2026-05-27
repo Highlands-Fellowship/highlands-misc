@@ -273,7 +273,7 @@ def fetch_completed_bills(
                 "merchant": vendor,
                 "date": date_str,
                 "reasons": errors,
-                "ramp_url": f"https://app.ramp.com/details/list/bills/{bill['id']}",
+                "ramp_url": f"https://app.ramp.com/bill-pay/bills/list/{bill['id']}",
             })
             continue
 

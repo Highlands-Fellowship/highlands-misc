@@ -279,7 +279,7 @@ def fetch_sync_ready_reimbursements(
                 "merchant": name,
                 "date": date_str,
                 "reasons": errors,
-                "ramp_url": f"https://app.ramp.com/details/list/reimbursements/{reimb['id']}",
+                "ramp_url": f"https://app.ramp.com/details/list/reimbursement/{reimb['id']}/review",
             })
             continue
 
