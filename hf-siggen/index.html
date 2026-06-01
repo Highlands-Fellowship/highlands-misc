@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Highlands Fellowship — Email Signature Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --hf-navy: #0d1d41;
+    --hf-navy-mid: #1e3d78;
+    --hf-teal: #56b6b2;
+    --hf-teal-dark: #3d9490;
+    --hf-yellow: #f4b334;
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #666666;
+    --border: #e0e0e0;
+    --dark-bg: #1f1f1f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 36px 28px 72px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Roboto Slab', Georgia, serif;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  header {
+    margin-bottom: 36px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .header-logo img {
+    height: 60px;
+    width: auto;
+    display: block;
+    border-radius: 8px;
+  }
+  .header-text .accent-bar {
+    display: block;
+    width: 40px;
+    height: 4px;
+    background: var(--hf-teal);
+    margin-bottom: 10px;
+    border-radius: 2px;
+  }
+  .header-text h1 {
+    font-size: 26px;
+    margin: 0 0 5px;
+    font-weight: 700;
+    color: var(--hf-navy);
+    letter-spacing: -0.01em;
+  }
+  .header-text p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 15px;
+    font-weight: 400;
+  }
+  @media (max-width: 900px) {
+    header { flex-direction: column; align-items: flex-start; }
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 28px;
+  }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 26px;
+  }
+  .card h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 20px;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  input[type="text"],
+  input[type="tel"],
+  input[type="email"],
+  input[type="url"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 15px;
+    font-family: inherit;
+    background: #fafafa;
+    color: var(--text);
+    transition: border-color 0.15s, background 0.15s;
+  }
+  input:focus {
+    outline: none;
+    border-color: var(--hf-teal);
+    background: #ffffff;
+  }
+  input.is-valid   { border-color: var(--hf-teal);   background: #f0fafa; }
+  input.is-partial { border-color: var(--hf-yellow);  background: #fdfaf0; }
+  input:disabled {
+    background: #ececec;
+    color: #777777;
+    cursor: not-allowed;
+    font-weight: 500;
+  }
+  select {
+    width: 100%;
+    padding: 10px 36px 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 15px;
+    font-family: inherit;
+    background-color: #fafafa;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none'><path d='M1 1.5L6 6.5L11 1.5' stroke='%23666' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 12px;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    color: var(--text);
+    transition: border-color 0.15s, background-color 0.15s;
+  }
+  select:focus {
+    outline: none;
+    border-color: var(--hf-teal);
+    background-color: #ffffff;
+  }
+  .field           { margin-bottom: 16px; }
+  .field-row-ext   { display: grid; grid-template-columns: 1fr 140px; gap: 10px; }
+  .field-row-label { display: grid; grid-template-columns: 140px 1fr; gap: 10px; }
+  .sub-field       { margin-top: 10px; }
+
+  .preview-box {
+    margin-bottom: 16px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .preview-label {
+    padding: 9px 16px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 500;
+  }
+  .preview-label-light { background: #f4f5f7; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .preview-label-dark  { background: #2a2a2a; color: #999;         border-bottom: 1px solid #333; }
+  .preview-canvas { padding: 24px; }
+  .preview-light  { background: #ffffff; }
+  .preview-dark   { background: var(--dark-bg); }
+
+  .actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  button {
+    flex: 1;
+    padding: 13px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+  }
+  button:active { transform: translateY(1px); }
+  .btn-primary {
+    background: var(--hf-teal);
+    color: #ffffff;
+  }
+  .btn-primary:hover { background: var(--hf-teal-dark); }
+  .btn-secondary {
+    background: var(--hf-navy);
+    color: #ffffff;
+  }
+  .btn-secondary:hover { background: var(--hf-navy-mid); }
+  .copied { background: #2a8c2a !important; color: #fff !important; }
+
+  details {
+    margin-top: 28px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 26px;
+  }
+  details[open] { padding-bottom: 26px; }
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 15px;
+    padding: 10px 0;
+    user-select: none;
+    color: var(--hf-navy);
+  }
+  summary:hover { color: var(--hf-teal-dark); }
+  details h3 { font-size: 15px; margin: 22px 0 8px; color: var(--hf-navy); font-weight: 600; }
+  details p, details li { font-size: 14px; color: #333; line-height: 1.6; }
+  details code {
+    background: #f0f0ec;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+  }
+  details pre {
+    background: #1a1a1a;
+    color: #e0e0dd;
+    padding: 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.55;
+    max-height: 360px;
+  }
+  footer {
+    margin-top: 48px;
+    text-align: center;
+    font-size: 13px;
+    color: #aaa;
+    font-weight: 400;
+  }
+  footer a { color: #aaa; text-decoration: none; }
+  footer a:hover { color: var(--hf-teal); }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <header>
+    <div class="header-logo">
+      <img src="https://res.cloudinary.com/hfchurch/image/upload/w_128/Brand%20Guide%20Logos/hf-logo-mark-primary.png" alt="Highlands Fellowship">
+    </div>
+    <div class="header-text">
+      <span class="accent-bar"></span>
+      <h1>Email Signature Generator</h1>
+      <p>Highlands Fellowship &mdash; fill in your details, preview, copy.</p>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- ============ FORM ============ -->
+    <section class="card">
+      <h2>Your Info</h2>
+
+      <div class="field">
+        <label for="f-name">Full Name</label>
+        <input type="text" id="f-name" placeholder="First Last">
+      </div>
+
+      <div class="field">
+        <label for="f-title">Title</label>
+        <input type="text" id="f-title" placeholder="Your Role">
+      </div>
+
+      <div class="field">
+        <label for="f-campus">
+          Campus / Location
+          <span style="font-weight:400; text-transform:none; letter-spacing:0; color:#aaa;">(optional)</span>
+        </label>
+        <input type="text" id="f-campus" placeholder="e.g. Abingdon, VA">
+      </div>
+
+      <div class="field">
+        <label for="f-org">Organization</label>
+        <input type="text" id="f-org" value="Highlands Fellowship">
+      </div>
+
+      <div class="field">
+        <label>Office Phone</label>
+        <div class="field-row-ext">
+          <input type="text" value="276-628-3297" disabled aria-label="Office phone (fixed)">
+          <input type="text" id="f-ext" placeholder="ext. (optional)" maxlength="8">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>
+          Alternate Phone
+          <span style="font-weight:400; text-transform:none; letter-spacing:0; color:#aaa;">(optional)</span>
+        </label>
+        <div class="field-row-label">
+          <select id="f-alt-label">
+            <option value="">— None —</option>
+            <option value="Direct">Direct</option>
+            <option value="Mobile">Mobile</option>
+            <option value="Cell">Cell</option>
+            <option value="Home">Home</option>
+            <option value="Custom">Custom&hellip;</option>
+          </select>
+          <input type="tel" id="f-alt-phone" placeholder="276-XXX-XXXX">
+        </div>
+        <input type="text" id="f-alt-custom" class="sub-field" placeholder="Custom label (e.g., Work Cell)" style="display:none;">
+      </div>
+
+      <div class="field">
+        <label for="f-email">Email</label>
+        <input type="email" id="f-email" placeholder="name@hf.church">
+      </div>
+
+      <div class="field">
+        <label for="f-website">Website</label>
+        <input type="url" id="f-website" value="hf.church">
+      </div>
+
+    </section>
+
+    <!-- ============ PREVIEW ============ -->
+    <section>
+
+      <div class="preview-box">
+        <div class="preview-label preview-label-light">Light mode preview</div>
+        <div class="preview-canvas preview-light" id="preview-light"></div>
+      </div>
+
+      <div class="preview-box">
+        <div class="preview-label preview-label-dark">
+          Dark mode preview
+          <span style="text-transform:none; letter-spacing:0; color:#777; font-weight:400;">&mdash; approximation of how auto-adapting clients will render it</span>
+        </div>
+        <div class="preview-canvas preview-dark" id="preview-dark"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn-primary" id="copy-rendered">Copy Signature (Recommended)</button>
+        <button class="btn-secondary" id="copy-html">Copy HTML Source</button>
+      </div>
+
+    </section>
+
+  </div>
+
+  <!-- ============ INSTRUCTIONS ============ -->
+  <details>
+    <summary>How to install in your email client</summary>
+
+    <h3>Outlook (desktop &mdash; Windows or Mac)</h3>
+    <ol>
+      <li>Click <strong>"Copy Signature (Recommended)"</strong> above.</li>
+      <li><strong>Windows:</strong> File &rarr; Options &rarr; Mail &rarr; Signatures.<br>
+          <strong>Mac (new Outlook):</strong> Outlook &rarr; Settings &rarr; Signatures.<br>
+          <strong>Mac (legacy Outlook):</strong> Outlook &rarr; Preferences &rarr; Signatures.</li>
+      <li>Click <strong>New</strong> (or <strong>+</strong> on Mac), name the signature.</li>
+      <li>Paste into the edit box (Ctrl/Cmd+V).</li>
+      <li>Set as default for new messages and replies. Save / OK.</li>
+    </ol>
+    <p style="color: var(--muted); font-size: 13px;"><em>Outlook desktop ignores dark-mode CSS, so it always renders the light version &mdash; this is expected and looks correct.</em></p>
+
+    <h3>Microsoft 365 / Outlook on the web</h3>
+    <ol>
+      <li>Click <strong>"Copy Signature (Recommended)"</strong> above.</li>
+      <li>Settings (gear, top right) &rarr; <strong>Mail &rarr; Compose and reply</strong>.<br>
+          <em>(If you don't see it, click "View all Outlook settings" at the bottom of the settings pane.)</em></li>
+      <li>Under <strong>Email signature</strong>, click <strong>+ New signature</strong>, give it a name.</li>
+      <li>Paste into the editor (Ctrl/Cmd+V).</li>
+      <li>Under <strong>Select default signatures</strong>, set it for new messages and replies/forwards. Save.</li>
+    </ol>
+
+    <h3>Apple Mail (macOS)</h3>
+    <ol>
+      <li>Click <strong>"Copy Signature (Recommended)"</strong> above.</li>
+      <li>Mail &rarr; <strong>Settings</strong> (or <strong>Preferences</strong> on older versions) &rarr; <strong>Signatures</strong> tab.</li>
+      <li>Select your account in the left column, click <strong>+</strong> to add a new signature, name it.</li>
+      <li>Click into the right-hand editor pane and paste (Cmd+V).</li>
+      <li><strong>Important:</strong> uncheck <em>"Always match my default message font"</em> at the bottom &mdash; otherwise Mail strips the formatting.</li>
+      <li>Drag the new signature onto your account if it isn't already attached, and pick it from the "Choose Signature" dropdown.</li>
+    </ol>
+
+    <h3>Apple Mail (iOS / iPadOS)</h3>
+    <p>iOS Mail doesn't have a rich signature editor in Settings &mdash; it accepts plain text only there. To get the formatted signature in, use this workaround:</p>
+    <ol>
+      <li>On your iPhone/iPad, open this page in <strong>Safari</strong> and fill in your info.</li>
+      <li>Tap and hold inside the <strong>light-mode preview</strong> above, then drag the selection handles to cover the entire signature (logo through website).</li>
+      <li>Tap <strong>Copy</strong>.</li>
+      <li>Open the <strong>Mail</strong> app and compose a new message to yourself. Paste the signature into the body and send it.</li>
+      <li>Open the email you just sent. Tap and hold on the signature, <strong>Select All</strong>, then <strong>Copy</strong>.</li>
+      <li>Go to <strong>Settings &rarr; Mail &rarr; Signature</strong>. Tap into the signature field, paste, and <em>before tapping out</em> shake the device (or tap and hold &rarr; <strong>Undo</strong> / <strong>Undo Attributes</strong>) &mdash; this preserves the formatting that iOS otherwise strips on first paste.</li>
+      <li>If you have multiple accounts, tap <strong>Per Account</strong> at the top and paste into each.</li>
+    </ol>
+    <p style="color: var(--muted); font-size: 13px;"><em>The "shake to undo attributes" step keeps the rich formatting &mdash; without it, iOS converts the paste to plain text.</em></p>
+
+    <h3>Raw HTML source</h3>
+    <p>If your email client lets you paste raw HTML, use the <strong>"Copy HTML Source"</strong> button instead:</p>
+    <pre id="html-source"></pre>
+  </details>
+
+  <footer>
+    <p>
+      <a href="https://hf.church" target="_blank" rel="noopener">Highlands Fellowship</a>
+      &mdash; Know God. Find Community. Make a Difference.
+    </p>
+  </footer>
+
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  const OFFICE_NUMBER = '276-628-3297';
+  const OFFICE_DIGITS = '2766283297';
+  const LOGO_URL = 'https://res.cloudinary.com/hfchurch/image/upload/w_128/Brand%20Guide%20Logos/hf-logo-mark-primary.png';
+
+  const fields = {
+    name:      $('f-name'),
+    title:     $('f-title'),
+    campus:    $('f-campus'),
+    org:       $('f-org'),
+    ext:       $('f-ext'),
+    altLabel:  $('f-alt-label'),
+    altCustom: $('f-alt-custom'),
+    altPhone:  $('f-alt-phone'),
+    email:     $('f-email'),
+    website:   $('f-website'),
+  };
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  function telHref(s) { return 'tel:' + String(s).replace(/[^\d+]/g, ''); }
+  function urlHref(s) {
+    s = String(s).trim();
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+    return s;
+  }
+
+  // Build the signature HTML.
+  // Light mode is the primary target — dark text on a transparent background.
+  // No @media queries or !important overrides: modern email clients (Apple Mail,
+  // iOS, Outlook.com) adapt to dark mode on their own and do a cleaner job when
+  // the source doesn't fight them.
+  function buildSignatureHTML(d) {
+    const name    = escapeHtml(d.name);
+    const title   = escapeHtml(d.title);
+    const campus  = escapeHtml(d.campus);
+    const org     = escapeHtml(d.org);
+    const email   = escapeHtml(d.email);
+    const website = escapeHtml(d.website);
+
+    const extDigits = d.ext ? d.ext.replace(/\D/g, '') : '';
+    // ",," in a tel: URI is a DTMF pause so mobile auto-dials the extension
+    // after the auto-attendant answers.
+    const officeTel = extDigits
+      ? `tel:${OFFICE_DIGITS},,${extDigits}`
+      : `tel:${OFFICE_DIGITS}`;
+    const extPart = d.ext
+      ? `<span style="color:#888888;">&nbsp;ext.&nbsp;${escapeHtml(d.ext)}</span>`
+      : '';
+
+    const campusLine = campus
+      ? `\n      <div style="font-size:13px; color:#555555; line-height:1.4;">${campus}</div>`
+      : '';
+
+    const altPhoneLine = (d.altLabel && d.altPhone)
+      ? `\n      <div><span style="color:#888888;">${escapeHtml(d.altLabel)}:&nbsp;</span><a href="${telHref(d.altPhone)}" style="color:#333333; text-decoration:none;">${escapeHtml(d.altPhone)}</a></div>`
+      : '';
+
+    return `<hr>
+<table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse:collapse; font-family:Arial, Helvetica, sans-serif; mso-line-height-rule:exactly;">
+  <tr>
+    <td style="padding:0 16px 0 0; vertical-align:middle;">
+      <img src="${LOGO_URL}" width="70" alt="Highlands Fellowship" style="display:block; border:0; outline:none; text-decoration:none; width:70px; height:auto; border-radius:8px;">
+    </td>
+    <td style="padding:2px 18px 2px 0; vertical-align:middle; border-right:2px solid #56b6b2;">
+      <div style="font-size:17px; font-weight:bold; color:#0d1d41; line-height:1.25; padding-bottom:4px;">${name}</div>
+      <div style="font-size:13px; color:#555555; line-height:1.4;">${title}</div>${campusLine}
+      <div style="font-size:13px; color:#555555; line-height:1.4;">${org}</div>
+    </td>
+    <td style="padding:2px 0 2px 18px; vertical-align:middle; font-size:13px; line-height:1.6;">
+      <div><span style="color:#888888;">Office:&nbsp;</span><a href="${officeTel}" style="color:#333333; text-decoration:none;">${OFFICE_NUMBER}</a>${extPart}</div>${altPhoneLine}
+      <div><span style="color:#888888;">Email:&nbsp;</span><a href="mailto:${email}" style="color:#333333; text-decoration:none;">${email}</a></div>
+      <div><span style="color:#888888;">Web:&nbsp;</span><a href="${urlHref(d.website)}" style="color:#333333; text-decoration:none;">${website}</a></div>
+    </td>
+  </tr>
+</table>`;
+  }
+
+  // The dark preview is a courtesy visualization only — approximate what
+  // auto-adapting email clients produce. The copied HTML never includes these overrides.
+  function buildSignatureHTMLForcedDark(d) {
+    return buildSignatureHTML(d)
+      .replace(/color:#0d1d41;/g, 'color:#a8dedd;')
+      .replace(/color:#333333;/g, 'color:#e0e0e0;')
+      .replace(/color:#555555;/g, 'color:#b8b8b8;')
+      .replace(/color:#888888;/g, 'color:#9a9a9a;');
+  }
+
+  function getData() {
+    const labelChoice = fields.altLabel.value;
+    const altLabel = labelChoice === 'Custom'
+      ? (fields.altCustom.value.trim() || 'Custom')
+      : labelChoice;
+    return {
+      name:     fields.name.value     || 'First Last',
+      title:    fields.title.value    || 'Your Role',
+      campus:   fields.campus.value.trim(),
+      org:      fields.org.value      || 'Highlands Fellowship',
+      ext:      fields.ext.value.trim(),
+      altLabel: altLabel,
+      altPhone: fields.altPhone.value,
+      email:    fields.email.value    || 'name@hf.church',
+      website:  fields.website.value  || 'hf.church',
+    };
+  }
+
+  function render() {
+    const d = getData();
+    $('preview-light').innerHTML = buildSignatureHTML(d);
+    $('preview-dark').innerHTML  = buildSignatureHTMLForcedDark(d);
+    $('html-source').textContent = buildSignatureHTML(d);
+  }
+
+  // ---------- Phone number formatting ----------
+  // Auto-formats to xxx-xxx-xxxx as the user types. Strips non-digits,
+  // caps at 10, and handles backspace-over-hyphen by deleting the digit
+  // before the hyphen (otherwise the hyphen just snaps back in).
+  function formatPhoneNumber(digits) {
+    digits = digits.slice(0, 10);
+    if (digits.length === 0) return '';
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+    return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+
+  function updatePhoneValidity(input) {
+    const digits = input.value.replace(/\D/g, '');
+    input.classList.remove('is-valid', 'is-partial');
+    if (digits.length === 10)     input.classList.add('is-valid');
+    else if (digits.length > 0)   input.classList.add('is-partial');
+  }
+
+  function handlePhoneInput(e) {
+    const input = e.target;
+    const oldValue = input.value;
+    const oldCursor = input.selectionStart || 0;
+    const digitsBeforeCursor = oldValue.slice(0, oldCursor).replace(/\D/g, '').length;
+
+    const digits    = oldValue.replace(/\D/g, '').slice(0, 10);
+    const formatted = formatPhoneNumber(digits);
+    input.value     = formatted;
+
+    let newCursor = 0, digitCount = 0;
+    for (let i = 0; i < formatted.length && digitCount < digitsBeforeCursor; i++) {
+      if (/\d/.test(formatted[i])) digitCount++;
+      newCursor = i + 1;
+    }
+    input.setSelectionRange(newCursor, newCursor);
+    updatePhoneValidity(input);
+  }
+
+  function handlePhoneKeyDown(e) {
+    if (e.key !== 'Backspace') return;
+    const input = e.target;
+    const pos   = input.selectionStart;
+    if (pos > 0 && pos === input.selectionEnd && input.value[pos - 1] === '-') {
+      e.preventDefault();
+      const newVal = input.value.slice(0, pos - 2) + input.value.slice(pos);
+      input.value  = newVal;
+      input.setSelectionRange(pos - 2, pos - 2);
+      input.dispatchEvent(new Event('input'));
+    }
+  }
+
+  // Attach phone handlers before render() so formatting fires first.
+  fields.altPhone.addEventListener('input',   handlePhoneInput);
+  fields.altPhone.addEventListener('keydown', handlePhoneKeyDown);
+
+  function updateCustomLabelVisibility() {
+    const isCustom = fields.altLabel.value === 'Custom';
+    fields.altCustom.style.display = isCustom ? 'block' : 'none';
+    if (isCustom) fields.altCustom.focus();
+  }
+  fields.altLabel.addEventListener('change', updateCustomLabelVisibility);
+  updateCustomLabelVisibility();
+
+  Object.values(fields).forEach(el => el.addEventListener('input', render));
+  render();
+
+  // Copy the rendered signature (preserves styling when pasted into email clients).
+  $('copy-rendered').addEventListener('click', async (e) => {
+    const btn  = e.currentTarget;
+    const html  = buildSignatureHTML(getData());
+    const plain = $('preview-light').innerText;
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html':  new Blob([html],  { type: 'text/html' }),
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+        })
+      ]);
+      flash(btn, 'Copied!');
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents($('preview-light'));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('copy');
+      sel.removeAllRanges();
+      flash(btn, 'Copied!');
+    }
+  });
+
+  $('copy-html').addEventListener('click', async (e) => {
+    const btn  = e.currentTarget;
+    const html  = buildSignatureHTML(getData());
+    try {
+      await navigator.clipboard.writeText(html);
+      flash(btn, 'HTML copied!');
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = html;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      flash(btn, 'HTML copied!');
+    }
+  });
+
+  function flash(btn, msg) {
+    const original = btn.textContent;
+    btn.textContent = msg;
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.classList.remove('copied');
+    }, 1500);
+  }
+</script>
+
+</body>
+</html>
