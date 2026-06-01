@@ -499,23 +499,30 @@
       ? `\n      <div><span style="color:#888888;">${escapeHtml(d.altLabel)}:&nbsp;</span><a href="${telHref(d.altPhone)}" style="color:#333333; text-decoration:none;">${escapeHtml(d.altPhone)}</a></div>`
       : '';
 
-    return `<hr style="margin-top:32px;">
-<table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse:collapse; font-family:Arial, Helvetica, sans-serif; mso-line-height-rule:exactly;">
-  <tr>
-    <td style="padding:0 16px 0 0; vertical-align:middle;">
-      <img src="${LOGO_URL}" width="70" alt="Highlands Fellowship" style="display:block; border:0; outline:none; text-decoration:none; width:70px; height:auto; border-radius:8px;">
-    </td>
-    <td style="padding:2px 18px 2px 0; vertical-align:middle; border-right:2px solid #56b6b2;">
-      <div style="font-size:17px; font-weight:bold; color:#0d1d41; line-height:1.25; padding-bottom:4px;">${name}</div>
-      <div style="font-size:13px; color:#555555; line-height:1.4;">${title}</div>${campusLine}
-      <div style="font-size:13px; color:#555555; line-height:1.4;">${org}</div>
-    </td>
-    <td style="padding:2px 0 2px 18px; vertical-align:middle; font-size:13px; line-height:1.6;">
-      <div><span style="color:#888888;">Office:&nbsp;</span><a href="${officeTel}" style="color:#333333; text-decoration:none;">${OFFICE_NUMBER}</a>${extPart}</div>${altPhoneLine}
-      <div><span style="color:#888888;">Email:&nbsp;</span><a href="mailto:${email}" style="color:#333333; text-decoration:none;">${email}</a></div>
-      <div><span style="color:#888888;">Web:&nbsp;</span><a href="${urlHref(d.website)}" style="color:#333333; text-decoration:none;">${website}</a></div>
-    </td>
-  </tr>
+    return `<table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse:collapse;">
+  <tbody>
+    <tr><td style="height:32px; font-size:1px; line-height:1px;">&nbsp;</td></tr>
+    <tr><td style="border-top:1px solid #cccccc; font-size:1px; line-height:1px;">&nbsp;</td></tr>
+  </tbody>
+</table>
+<table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse:collapse; font-family:Arial, Helvetica, sans-serif;">
+  <tbody>
+    <tr>
+      <td style="padding:0 16px 0 0; vertical-align:middle;">
+        <img src="${LOGO_URL}" width="70" height="70" alt="Highlands Fellowship" style="display:block; border:0; outline:none; text-decoration:none; width:70px; height:70px; border-radius:8px;">
+      </td>
+      <td style="padding:2px 18px 2px 0; vertical-align:middle; border-right:2px solid #56b6b2;">
+        <div style="font-size:17px; font-weight:bold; color:#0d1d41; line-height:1.25; padding-bottom:4px;">${name}</div>
+        <div style="font-size:13px; color:#555555; line-height:1.4;">${title}</div>${campusLine}
+        <div style="font-size:13px; color:#555555; line-height:1.4;">${org}</div>
+      </td>
+      <td style="padding:2px 0 2px 18px; vertical-align:middle; font-size:13px; line-height:1.6;">
+        <div><span style="color:#888888;">Office:&nbsp;</span><a href="${officeTel}" style="color:#333333; text-decoration:none;">${OFFICE_NUMBER}</a>${extPart}</div>${altPhoneLine}
+        <div><span style="color:#888888;">Email:&nbsp;</span><a href="mailto:${email}" style="color:#333333; text-decoration:none;">${email}</a></div>
+        <div><span style="color:#888888;">Web:&nbsp;</span><a href="${urlHref(d.website)}" style="color:#333333; text-decoration:none;">${website}</a></div>
+      </td>
+    </tr>
+  </tbody>
 </table>`;
   }
 
