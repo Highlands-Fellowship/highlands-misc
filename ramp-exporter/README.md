@@ -60,6 +60,59 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 
 ---
 
+## Card Payments
+
+### How it works
+
+1. Fetches closed Ramp card statements from the Ramp API (`statements:read` scope required).
+2. Filters to statements matching the configured entity (`CARD_PAYMENT_ENTITY_ID`) — excludes Subscription statements.
+3. For each statement, fetches all card transactions via the `statement_id` filter.
+4. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
+5. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
+6. Builds a Sage 50 **Payments Journal** CSV — one payment row per invoice, grouped under the vendor.
+7. Emails the CSV via branded HTML email.
+8. Records exported statement IDs in `exported_statement_ids.json`.
+
+> **Important:** Import the CSV directly — do not open it in Excel first. Excel reformats the `Invoice Paid` values, breaking the match to existing AP invoices.
+
+### Field mapping
+
+| Sage 50 column | Source |
+|---|---|
+| Vendor ID | `accounting_field_selections[type=MERCHANT].external_id` |
+| Check Number | `RAMP-MMDDYY-NNN` (unique per vendor per statement) |
+| Check Name | `Ramp` (the ACH recipient) |
+| Date | `end_date` of the statement (settlement/due date) |
+| Memo | `Ramp Card Payment {Mon DD} - {Mon DD}, {YYYY}` (statement period) |
+| Cash Account | `CARD_PAYMENT_CASH_ACCOUNT` env var (default `1003-AB`) |
+| Invoice Paid | Regenerated invoice number matching the Purchases Journal import |
+| G/L Account (AP clearing) | `CARD_PAYMENT_AP_ACCOUNT` env var (default `2104-AB`) |
+| Total Paid on Invoice(s) | Sum of all invoices for that vendor in the statement |
+| Amount | Individual invoice amount |
+
+### Running
+
+```powershell
+# Inspect raw statement and transaction data
+python card_payment.py --dump-raw
+
+# Dry run — builds CSV, skips email and state update
+python card_payment.py --dry-run
+
+# Full run (emails CSV, updates exported_statement_ids.json)
+python card_payment.py
+
+# Include transactions missing a Vendor ID (one-time recovery use)
+python card_payment.py --dry-run --include-all
+
+# Mark specific statement IDs as exported without re-running
+python card_payment.py --mark-synced-ids STMT_ID1
+```
+
+Import into Sage 50 via: **File → Select Import/Export → Accounts Payable → Payments Journal → Import**
+
+---
+
 ## Reimbursements
 
 ### How it works
@@ -112,7 +165,7 @@ python reimburse.py --dump-raw --employee "Stuart"
 python reimburse.py --mark-synced-ids ID1 ID2
 ```
 
-Import into Sage 50 via: **File → Select Import/Export → General Journal Transactions → Import**
+Import into Sage 50 via: **File → Select Import/Export → General Ledger → General Journal → Import**
 
 ---
 
@@ -206,9 +259,13 @@ REIMBURSEMENT_CLEARING_ACCOUNT=2200    # ACH clearing account for reimbursements
 REIMBURSEMENT_BANK_ACCOUNT=1003-AB     # Bank account debited on reimbursement payment
 BILLPAY_CASH_ACCOUNT=1000-AB           # Bank account debited on bill payment
 BILLPAY_AP_ACCOUNT=2200                # AP clearing account for bill payments
+CARD_PAYMENT_CASH_ACCOUNT=1003-AB      # Bank account debited on card payment
+CARD_PAYMENT_AP_ACCOUNT=2104-AB        # AP account cleared by card payment
+CARD_PAYMENT_ENTITY_ID=                # Entity ID from balance_sections[0].entity_id in
+                                       # --dump-raw output — filters out Subscription statements
 ```
 
-**Ramp API setup:** Go to Ramp Settings → Developers → Create an API app with the `transactions:read`, `reimbursements:read`, and `bills:read` scopes. Copy the client ID and secret into `.env`.
+**Ramp API setup:** Go to Ramp Settings → Developers → Create an API app with the `transactions:read`, `reimbursements:read`, `bills:read`, and `statements:read` scopes. Copy the client ID and secret into `.env`.
 
 **Gmail App Password:** Google Account → Security → 2-Step Verification → App passwords.
 
@@ -228,6 +285,7 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 python main.py --dump-raw
 python reimburse.py --dump-raw
 python billpay.py --dump-raw
+python card_payment.py --dump-raw
 ```
 
 ### 5. Schedule on Windows
@@ -238,7 +296,7 @@ Run once from an elevated PowerShell prompt to register the daily Task Scheduler
 .\setup_task.ps1
 ```
 
-Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, `$CARD_HOUR`, `$REIMB_HOUR`, and `$BILL_HOUR` before running. Each script runs with `--mark-synced` so exported transactions are automatically marked in Ramp.
+Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variables before running. Card transactions, reimbursements, and bill payments each run with `--mark-synced`. Card payments run at `$CARD_PMT_HOUR` (default 7 AM, one hour after the others) and require no `--mark-synced` flag — statements have no sync status in Ramp.
 
 ---
 
@@ -247,20 +305,24 @@ Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, `$CARD_HOUR`, `$REIMB
 | File | Purpose |
 |---|---|
 | `main.py` | Card transactions entry point |
+| `card_payment.py` | Card statement payments entry point |
 | `reimburse.py` | Reimbursements entry point |
 | `billpay.py` | Bill pay entry point |
 | `ramp_client.py` | Ramp API auth, card transaction fetch, validation |
+| `statement_client.py` | Ramp API fetch for card statements and their transactions |
 | `reimbursement_client.py` | Ramp API fetch for reimbursements, journal row expansion |
 | `billpay_client.py` | Ramp API fetch for bills, purchase/payment row expansion |
 | `sage_formatter.py` | Builds the Sage 50 vendor-invoice CSV (used by card and bill pay) |
+| `card_payment_formatter.py` | Builds the Sage 50 Payments Journal CSV for card statements |
 | `reimbursement_formatter.py` | Builds the Sage 50 General Journal CSV |
-| `billpay_payment_formatter.py` | Builds the Sage 50 Payments Journal CSV |
+| `billpay_payment_formatter.py` | Builds the Sage 50 Payments Journal CSV for bill payments |
 | `emailer.py` | Sends CSV(s) as branded HTML email via Gmail |
 | `email_template.py` | Highlands Fellowship branded HTML email templates |
 | `setup_accounting_connection.py` | One-time Ramp accounting connection setup (run before --mark-synced) |
 | `setup_task.ps1` | Registers the Windows Task Scheduler jobs |
 | `.env.example` | Secrets template — copy to `.env` |
 | `exported_ids.json` | State file for card transaction IDs (auto-created) |
+| `exported_statement_ids.json` | State file for card statement IDs (auto-created) |
 | `exported_reimb_ids.json` | State file for reimbursement IDs (auto-created) |
 | `exported_bill_ids.json` | State file for bill IDs (auto-created) |
 | `output\` | Generated CSVs (auto-created) |
