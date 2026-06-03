@@ -72,6 +72,11 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--dump-raw", action="store_true")
     parser.add_argument(
+        "--include-all",
+        action="store_true",
+        help="include transactions missing a Vendor ID, using merchant name as fallback (one-time recovery use)",
+    )
+    parser.add_argument(
         "--mark-synced-ids",
         metavar="ID",
         nargs="+",
@@ -126,6 +131,7 @@ def main() -> None:
         client_id,
         client_secret,
         skip_ids=exported_ids,
+        include_all=args.include_all,
     )
 
     if skipped:

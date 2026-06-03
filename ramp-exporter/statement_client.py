@@ -196,7 +196,7 @@ def _fetch_transactions_for_statement(token: str, stmt: dict) -> list[dict]:
     return fetched
 
 
-def _build_payment_rows(stmt: dict, txns: list[dict]) -> list[dict]:
+def _build_payment_rows(stmt: dict, txns: list[dict], include_all: bool = False) -> list[dict]:
     """
     Convert a statement + its transactions into Payments Journal row dicts,
     grouped by vendor.  One logical payment per vendor, N rows (one per invoice).
@@ -226,22 +226,28 @@ def _build_payment_rows(stmt: dict, txns: list[dict]) -> list[dict]:
         vid = _vendor_id(tx)
         if not vid:
             raw_date = tx.get("accounting_date") or tx.get("user_transaction_time") or ""
-            skipped.append({
-                "merchant": tx.get("merchant_name") or "unknown merchant",
-                "date": _format_date(raw_date),
-                "amount": _tx_amount(tx),
-                "id": tx["id"],
-                "reasons": ["missing Vendor ID (set Accounting Vendor in Ramp)"],
-                "ramp_url": f"https://app.ramp.com/details/list/transactions/{tx['id']}",
-            })
-            log.warning(
-                "SKIPPED %s  %s  %s  $%.2f -- missing Vendor ID",
-                tx["id"],
-                tx.get("merchant_name") or "unknown",
-                _format_date(raw_date),
-                _tx_amount(tx),
-            )
-            continue
+            merchant = tx.get("merchant_name") or "unknown merchant"
+            if include_all:
+                # Fall back to merchant name as vendor ID so the row is included
+                vid = merchant
+                log.warning(
+                    "NO VENDOR ID %s  %s  %s  $%.2f -- using merchant name as fallback",
+                    tx["id"], merchant, _format_date(raw_date), _tx_amount(tx),
+                )
+            else:
+                skipped.append({
+                    "merchant": merchant,
+                    "date": _format_date(raw_date),
+                    "amount": _tx_amount(tx),
+                    "id": tx["id"],
+                    "reasons": ["missing Vendor ID (set Accounting Vendor in Ramp)"],
+                    "ramp_url": f"https://app.ramp.com/details/list/transactions/{tx['id']}",
+                })
+                log.warning(
+                    "SKIPPED %s  %s  %s  $%.2f -- missing Vendor ID",
+                    tx["id"], merchant, _format_date(raw_date), _tx_amount(tx),
+                )
+                continue
         by_vendor.setdefault(vid, []).append(tx)
 
     rows = []
@@ -282,11 +288,13 @@ def fetch_paid_statements(
     client_id: str,
     client_secret: str,
     skip_ids: set[str],
+    include_all: bool = False,
 ) -> tuple[list[dict], list[str], list[dict]]:
     """
     Fetch closed statements not yet exported, expand into Payments Journal rows.
     Returns (payment_rows, statement_ids, skipped).
     skipped — transactions missing a Vendor ID, same structure as other pipelines.
+    include_all — if True, use merchant name as vendor ID fallback instead of skipping.
     """
     log = logging.getLogger(__name__)
     token = _get_token(client_id, client_secret)
@@ -327,7 +335,7 @@ def fetch_paid_statements(
             log.warning("Statement %s: no transactions found — skipping.", stmt["id"])
             continue
 
-        rows, skipped = _build_payment_rows(stmt, txns)
+        rows, skipped = _build_payment_rows(stmt, txns, include_all=include_all)
         all_skipped.extend(skipped)
 
         if not rows:
