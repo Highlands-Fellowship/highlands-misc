@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pulls card transactions, reimbursements, and bill payments from the Ramp API, formats them as Sage 50-compatible CSVs, and emails the files via Gmail. Runs daily on Windows via Task Scheduler, replacing a manual Ramp UI export + Excel macro workflow.
 
-Three independent entry points, each with its own state file and email:
+Four independent entry points, each with its own state file and email:
 - `main.py` — card transactions → Sage 50 **Purchases Journal** (`sage_formatter.py`)
+- `card_payment.py` — card statement payments → Sage 50 **Payments Journal** (`card_payment_formatter.py`) — clears the open AP invoices created by `main.py`
 - `reimburse.py` — reimbursements → Sage 50 **General Journal** (`reimbursement_formatter.py`)
 - `billpay.py` — bill payments → Sage 50 **Purchases Journal** + **Payments Journal** (`sage_formatter.py` + `billpay_payment_formatter.py`)
 
@@ -31,16 +32,18 @@ python main.py --dry-run --date-from 2026-05-01
 python main.py --mark-synced
 python reimburse.py --mark-synced
 python billpay.py --mark-synced
+python card_payment.py          # no --mark-synced needed (no Ramp sync for payments)
 
-# Recovery: mark specific IDs synced without re-exporting
+# Recovery: mark specific IDs as exported without re-running
 python main.py --mark-synced-ids ID1 ID2
 python reimburse.py --mark-synced-ids ID1
 python billpay.py --mark-synced-ids ID1
+python card_payment.py --mark-synced-ids STMT_ID1
 ```
 
 ## Required `.env` file
 
-Copy `.env.example` to `.env`. Required keys: `RAMP_CLIENT_ID`, `RAMP_CLIENT_SECRET`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `NOTIFY_EMAIL`. Optional: `OUTPUT_DIR`, `REIMBURSEMENT_CLEARING_ACCOUNT` (default `2200`), `REIMBURSEMENT_BANK_ACCOUNT` (default `1003-AB`), `BILLPAY_CASH_ACCOUNT` (default `1000-AB`), `BILLPAY_AP_ACCOUNT` (default `2200`).
+Copy `.env.example` to `.env`. Required keys: `RAMP_CLIENT_ID`, `RAMP_CLIENT_SECRET`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `NOTIFY_EMAIL`. Optional: `OUTPUT_DIR`, `REIMBURSEMENT_CLEARING_ACCOUNT` (default `2200`), `REIMBURSEMENT_BANK_ACCOUNT` (default `1003-AB`), `BILLPAY_CASH_ACCOUNT` (default `1000-AB`), `BILLPAY_AP_ACCOUNT` (default `2200`), `CARD_PAYMENT_CASH_ACCOUNT` (default `1003-AB`), `CARD_PAYMENT_AP_ACCOUNT` (default `2104-AB`).
 
 ## One-time setup: Ramp accounting connection
 
@@ -58,6 +61,19 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 - **Pagination:** `page.next` in the response body is either a full URL or a cursor string. All three clients handle both forms.
 - **Sync endpoint:** `POST /developer/v1/accounting/syncs` (plural, not `/sync`). Body requires `idempotency_key` (UUID), `sync_type` (`TRANSACTION_SYNC` / `REIMBURSEMENT_SYNC` / `BILL_SYNC`), and `successful_syncs[{id, reference_id}]`.
 - `from_date` params must be full ISO datetimes (`2026-01-01T00:00:00Z`), not date-only strings.
+
+### Card statement payments (`statement_client.py` → `card_payment_formatter.py`)
+
+- Fetches paid statements from `GET /developer/v1/statements` — filters `payment_status == "PAID"`
+- For each statement, fetches its transactions by date range (`from_date` / `to_date` params on `/transactions`)
+- Regenerates invoice numbers using the **same stable formula** as card transactions: `{vendor[:9]}.{MMDDYY}.{id[-3:]}` — must match exactly
+- Groups transactions by `vendor_id` — one logical payment per vendor per statement
+- All vendor groups share the same `check_number` (statement ID) and `payment_date`
+- Produces multi-distribution payment rows: `num_distributions` = invoices per vendor, `total_amount` = vendor subtotal, `amount` = individual invoice amount
+- `CARD_PAYMENT_CASH_ACCOUNT` (default `1003-AB`) — bank account debited
+- `CARD_PAYMENT_AP_ACCOUNT` (default `2104-AB`) — AP account cleared (must match what Purchases Journal used)
+- State file: `exported_statement_ids.json`
+- No Ramp sync call needed — statements have no sync_status concept
 
 ### Card transactions (`ramp_client.py` → `sage_formatter.py`)
 
