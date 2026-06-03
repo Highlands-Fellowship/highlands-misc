@@ -174,7 +174,7 @@ def build_reimbursement_email(
     """Return (html, plain_text) for a reimbursement export notification."""
     import_path = (
         "File &rsaquo; Select Import/Export &rsaquo; "
-        "General Journal Transactions &rsaquo; Import"
+        "General Ledger &rsaquo; General Journal &rsaquo; Import"
     )
     return _build(
         heading="Reimbursements Ready for Import",

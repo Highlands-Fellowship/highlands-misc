@@ -73,10 +73,15 @@ def build_csv(rows: list[dict]) -> str:
             gl = bank
 
         amount_str = f"{float(row['amount']):.2f}"
+        reference = (
+            "Ramp Reimbursement PYMT"
+            if role in ("payment_debit", "payment_credit")
+            else "Ramp Reimbursement EXP"
+        )
 
         writer.writerow([
             row["date"],
-            "Ramp Reimbursement",
+            reference,
             "",                          # Date Clear in Bank Rec
             row["num_distributions"],
             gl,
