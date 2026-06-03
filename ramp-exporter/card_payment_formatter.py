@@ -87,7 +87,7 @@ def build_csv(payment_rows: list[dict]) -> str:
 
         writer.writerow([
             row["vendor_id"],
-            row["vendor_name"],
+            "",                            # Vendor Name — left blank; Sage fills from vendor record
             "Ramp",                        # Check Name = who received the ACH payment
             "",                            # Check Address-Line One
             "",                            # Check Address-Line Two

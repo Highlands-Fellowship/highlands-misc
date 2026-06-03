@@ -211,7 +211,7 @@ def _build_payment_rows(stmt: dict, txns: list[dict]) -> list[dict]:
         dt_end = datetime.datetime.fromisoformat(end_raw_memo.replace("Z", "+00:00"))
         memo = (
             f"Ramp Card Payment "
-            f"{dt_start.strftime('%b')} {dt_start.day} – "
+            f"{dt_start.strftime('%b')} {dt_start.day} - "
             f"{dt_end.strftime('%b')} {dt_end.day}, {dt_end.year}"
         )
     except Exception:
