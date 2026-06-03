@@ -217,11 +217,30 @@ def _build_payment_rows(stmt: dict, txns: list[dict]) -> list[dict]:
     except Exception:
         memo = "Ramp Card Payment"
 
-    # Group by vendor_id
+    log = logging.getLogger(__name__)
+
+    # Group by vendor_id; collect transactions missing a vendor ID separately
     by_vendor: dict[str, list[dict]] = {}
+    skipped: list[dict] = []
     for tx in txns:
         vid = _vendor_id(tx)
         if not vid:
+            raw_date = tx.get("accounting_date") or tx.get("user_transaction_time") or ""
+            skipped.append({
+                "merchant": tx.get("merchant_name") or "unknown merchant",
+                "date": _format_date(raw_date),
+                "amount": _tx_amount(tx),
+                "id": tx["id"],
+                "reasons": ["missing Vendor ID (set Accounting Vendor in Ramp)"],
+                "ramp_url": f"https://app.ramp.com/details/list/transactions/{tx['id']}",
+            })
+            log.warning(
+                "SKIPPED %s  %s  %s  $%.2f -- missing Vendor ID",
+                tx["id"],
+                tx.get("merchant_name") or "unknown",
+                _format_date(raw_date),
+                _tx_amount(tx),
+            )
             continue
         by_vendor.setdefault(vid, []).append(tx)
 
@@ -256,17 +275,18 @@ def _build_payment_rows(stmt: dict, txns: list[dict]) -> list[dict]:
                 "payment_method": "Check",
             })
 
-    return rows
+    return rows, skipped
 
 
 def fetch_paid_statements(
     client_id: str,
     client_secret: str,
     skip_ids: set[str],
-) -> tuple[list[dict], list[str]]:
+) -> tuple[list[dict], list[str], list[dict]]:
     """
     Fetch closed statements not yet exported, expand into Payments Journal rows.
-    Returns (payment_rows, statement_ids).
+    Returns (payment_rows, statement_ids, skipped).
+    skipped — transactions missing a Vendor ID, same structure as other pipelines.
     """
     log = logging.getLogger(__name__)
     token = _get_token(client_id, client_secret)
@@ -298,6 +318,7 @@ def fetch_paid_statements(
     statements.sort(key=lambda s: s.get("start_date") or s.get("period_start") or "")
 
     all_rows: list[dict] = []
+    all_skipped: list[dict] = []
     stmt_ids: list[str] = []
 
     for stmt in statements:
@@ -306,7 +327,9 @@ def fetch_paid_statements(
             log.warning("Statement %s: no transactions found — skipping.", stmt["id"])
             continue
 
-        rows = _build_payment_rows(stmt, txns)
+        rows, skipped = _build_payment_rows(stmt, txns)
+        all_skipped.extend(skipped)
+
         if not rows:
             log.warning(
                 "Statement %s: all transactions missing vendor ID — skipping.", stmt["id"]
@@ -315,18 +338,19 @@ def fetch_paid_statements(
 
         unique_vendors = len({r["vendor_id"] for r in rows})
         log.info(
-            "Statement %s (%s – %s): %d transaction(s), %d vendor(s), payment date %s",
+            "Statement %s (%s - %s): %d transaction(s), %d vendor(s), %d skipped, payment date %s",
             stmt["id"],
             _format_date(stmt.get("start_date") or ""),
             _format_date(stmt.get("end_date") or ""),
             len(txns),
             unique_vendors,
+            len(skipped),
             rows[0]["payment_date"] if rows else "?",
         )
         all_rows.extend(rows)
         stmt_ids.append(stmt["id"])
 
-    return all_rows, stmt_ids
+    return all_rows, stmt_ids, all_skipped
 
 
 def dump_raw_statement(client_id: str, client_secret: str) -> tuple[dict | None, list[dict]]:

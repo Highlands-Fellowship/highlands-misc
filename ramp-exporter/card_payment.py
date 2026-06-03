@@ -122,11 +122,16 @@ def main() -> None:
     exported_ids = _load_exported_ids()
 
     log.info("Fetching paid statements from Ramp...")
-    payment_rows, stmt_ids = statement_client.fetch_paid_statements(
+    payment_rows, stmt_ids, skipped = statement_client.fetch_paid_statements(
         client_id,
         client_secret,
         skip_ids=exported_ids,
     )
+
+    if skipped:
+        log.warning(
+            "%d transaction(s) skipped due to missing Vendor ID (see above).", len(skipped)
+        )
 
     if not stmt_ids:
         log.info("Nothing to do — no new paid statements.")
@@ -161,7 +166,7 @@ def main() -> None:
     html_body, plain_body = email_template.build_card_payment_email(
         count=unique_invoices,
         gen_date=f"{today:%Y-%m-%d}",
-        skipped=[],
+        skipped=skipped,
     )
 
     log.info("Sending email to %s...", notify_email)
