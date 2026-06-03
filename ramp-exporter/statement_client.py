@@ -35,7 +35,7 @@ def _get_token(client_id: str, client_secret: str) -> str:
     resp = requests.post(
         RAMP_TOKEN_URL,
         auth=(client_id, client_secret),
-        data={"grant_type": "client_credentials", "scope": "transactions:read"},
+        data={"grant_type": "client_credentials", "scope": "statements:read transactions:read"},
         timeout=30,
     )
     resp.raise_for_status()
