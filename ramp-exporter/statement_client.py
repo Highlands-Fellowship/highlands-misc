@@ -167,30 +167,17 @@ def _invoice_number(tx: dict) -> str:
 
 def _fetch_transactions_for_statement(token: str, stmt: dict) -> list[dict]:
     """
-    Fetch the full transaction objects for every CARD_TRANSACTION in the statement.
+    Fetch all transactions belonging to this statement.
 
-    Uses the transaction IDs from statement_lines to filter a date-range
-    fetch — more reliable than date range alone.
+    Filters by statement_id (confirmed present on transaction objects from live API),
+    which is more reliable than a date-range fetch since it won't miss transactions
+    whose accounting_date falls slightly outside the statement period.
     """
-    tx_ids = _statement_tx_ids(stmt)
-    if not tx_ids:
+    stmt_id = stmt.get("id") or ""
+    if not stmt_id:
         return []
 
-    start_raw = stmt.get("start_date") or stmt.get("period_start") or ""
-    end_raw = stmt.get("end_date") or stmt.get("period_end") or ""
-
-    if not start_raw:
-        return []
-
-    if len(start_raw) == 10:
-        start_raw += "T00:00:00Z"
-    if end_raw and len(end_raw) == 10:
-        end_raw += "T23:59:59Z"
-
-    params: dict = {"page_size": 100, "from_date": start_raw}
-    if end_raw:
-        params["to_date"] = end_raw
-
+    params: dict = {"page_size": 100, "statement_id": stmt_id}
     fetched: list[dict] = []
     next_url = None
 
@@ -200,9 +187,7 @@ def _fetch_transactions_for_statement(token: str, stmt: dict) -> list[dict]:
         else:
             body = _get(token, RAMP_TRANSACTIONS_URL, params=params)
 
-        for tx in body.get("data", []):
-            if tx["id"] in tx_ids:
-                fetched.append(tx)
+        fetched.extend(body.get("data", []))
 
         next_url = body.get("page", {}).get("next")
         if not next_url:
