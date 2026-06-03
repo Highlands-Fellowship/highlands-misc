@@ -75,6 +75,7 @@ def main() -> None:
     parser.add_argument("--limit", metavar="N", type=int, help="cap export at N transactions (for test imports)")
     parser.add_argument("--mark-synced", action="store_true", help="mark exported transactions as synced in Ramp after emailing")
     parser.add_argument("--mark-synced-ids", metavar="ID", nargs="+", help="mark specific transaction IDs as synced without re-exporting")
+    parser.add_argument("--reexport-ids", metavar="ID", nargs="+", help="re-export specific transaction IDs regardless of state file or sync status")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -86,6 +87,53 @@ def main() -> None:
     if args.mark_synced_ids:
         log.info("Marking %d transaction(s) as synced in Ramp...", len(args.mark_synced_ids))
         ramp_client.mark_synced(client_id, client_secret, args.mark_synced_ids)
+        return
+
+    if args.reexport_ids:
+        gmail_user = _require_env("GMAIL_USER")
+        gmail_pass = _require_env("GMAIL_APP_PASSWORD")
+        notify_email = [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
+
+        log.info("Re-fetching %d specific transaction(s) by ID...", len(args.reexport_ids))
+        rows, skipped = ramp_client.fetch_transactions_by_ids(
+            client_id, client_secret, args.reexport_ids
+        )
+        if skipped:
+            log.warning("%d transaction(s) skipped due to missing fields.", len(skipped))
+        if not rows:
+            log.info("No valid rows produced — check IDs and Ramp field setup.")
+            return
+
+        unique_txns = len({r["id"] for r in rows})
+        csv_data = sage_formatter.build_csv(rows)
+        today = date.today()
+        csv_filename = f"sage_card_transactions_reexport_{today:%Y%m%d}.csv"
+        csv_path = OUTPUT_DIR / csv_filename
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            f.write(csv_data)
+        log.info("CSV written to %s", csv_path)
+
+        if args.dry_run:
+            log.info("[dry-run] Skipping email.")
+            return
+
+        subject = f"Ramp Card Transactions Re-export — {unique_txns} transaction(s) ({today:%B %d, %Y})"
+        html_body, plain_body = email_template.build_card_email(
+            count=unique_txns,
+            gen_date=f"{today:%Y-%m-%d}",
+            skipped=skipped,
+        )
+        emailer.send_csv(
+            gmail_user=gmail_user,
+            gmail_app_password=gmail_pass,
+            to_address=notify_email,
+            subject=subject,
+            body_plain=plain_body,
+            csv_data=csv_data,
+            filename=csv_filename,
+            body_html=html_body,
+        )
+        log.info("Re-export email sent.")
         return
 
     # --dump-raw: print first matching SYNC_READY transaction and exit

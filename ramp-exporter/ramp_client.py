@@ -271,6 +271,36 @@ def _assign_invoices_and_expand(txns: list[dict]) -> tuple[list[dict], list[dict
     return rows, skipped
 
 
+def fetch_transactions_by_ids(
+    client_id: str,
+    client_secret: str,
+    transaction_ids: list[str],
+) -> tuple[list[dict], list[dict]]:
+    """
+    Fetch specific transactions by ID and expand into Sage distribution rows.
+    Bypasses sync_status filter and state file — for re-exporting specific
+    transactions that were missed or lost during import testing.
+    Returns (rows, skipped).
+    """
+    import logging
+    log = logging.getLogger(__name__)
+    token = _get_token(client_id, client_secret)
+
+    txns = []
+    for tid in transaction_ids:
+        resp = requests.get(
+            f"{RAMP_TRANSACTIONS_URL}/{tid}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        if not resp.ok:
+            log.error("Could not fetch transaction %s: %s %s", tid, resp.status_code, resp.text)
+            continue
+        txns.append(resp.json())
+
+    return _assign_invoices_and_expand(txns)
+
+
 def dump_raw_transaction(
     client_id: str, client_secret: str, merchant: str | None = None
 ) -> tuple[dict | None, dict]:
