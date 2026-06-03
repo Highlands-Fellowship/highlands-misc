@@ -205,9 +205,15 @@ def _build_payment_rows(stmt: dict, txns: list[dict]) -> list[dict]:
     check_number = _statement_check_number(stmt)
 
     start_raw = stmt.get("start_date") or ""
+    end_raw_memo = stmt.get("end_date") or ""
     try:
-        dt = datetime.datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
-        memo = f"Ramp Card Payment {dt.strftime('%B %Y')}"
+        dt_start = datetime.datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+        dt_end = datetime.datetime.fromisoformat(end_raw_memo.replace("Z", "+00:00"))
+        memo = (
+            f"Ramp Card Payment "
+            f"{dt_start.strftime('%b')} {dt_start.day} – "
+            f"{dt_end.strftime('%b')} {dt_end.day}, {dt_end.year}"
+        )
     except Exception:
         memo = "Ramp Card Payment"
 

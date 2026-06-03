@@ -88,7 +88,7 @@ def build_csv(payment_rows: list[dict]) -> str:
         writer.writerow([
             row["vendor_id"],
             row["vendor_name"],
-            row["vendor_name"],           # Check Name = Vendor Name
+            "Ramp",                        # Check Name = who received the ACH payment
             "",                            # Check Address-Line One
             "",                            # Check Address-Line Two
             "",                            # Check City
