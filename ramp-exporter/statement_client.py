@@ -114,10 +114,17 @@ def _statement_payment_date(stmt: dict) -> str:
     return _format_date(raw)
 
 
-def _statement_check_number(stmt: dict) -> str:
-    """Last 20 chars of the statement ID — fits Sage 50's Check Number field."""
-    sid = stmt.get("id") or ""
-    return sid[-20:] if sid else ""
+def _statement_check_prefix(stmt: dict) -> str:
+    """
+    Return a short date-based prefix for check numbers: RAMP-MMDDYY
+    Each vendor in the statement gets RAMP-MMDDYY-001, -002, etc.
+    Max length: 14 chars for prefix alone, 18 with -NNN suffix (within Sage 50's 20-char limit).
+    """
+    end_raw = stmt.get("end_date") or stmt.get("period_end") or ""
+    date_str = _format_date(end_raw)
+    m, d, y = (date_str.split("/") + ["", "", ""])[:3]
+    mmddyy = f"{m}{d}{y[2:]}" if m and d and y else "000000"
+    return f"RAMP-{mmddyy}"
 
 
 def _vendor_id(tx: dict) -> str:
@@ -202,7 +209,7 @@ def _build_payment_rows(stmt: dict, txns: list[dict], include_all: bool = False)
     grouped by vendor.  One logical payment per vendor, N rows (one per invoice).
     """
     payment_date = _statement_payment_date(stmt)
-    check_number = _statement_check_number(stmt)
+    check_prefix = _statement_check_prefix(stmt)
 
     start_raw = stmt.get("start_date") or ""
     end_raw_memo = stmt.get("end_date") or ""
@@ -251,7 +258,10 @@ def _build_payment_rows(stmt: dict, txns: list[dict], include_all: bool = False)
         by_vendor.setdefault(vid, []).append(tx)
 
     rows = []
-    for vid, vendor_txns in by_vendor.items():
+    for seq, (vid, vendor_txns) in enumerate(by_vendor.items(), start=1):
+        # Unique check number per vendor: RAMP-MMDDYY-001, -002, etc.
+        check_number = f"{check_prefix}-{seq:03d}"
+
         vendor_txns.sort(
             key=lambda t: t.get("accounting_date") or t.get("user_transaction_time") or ""
         )
