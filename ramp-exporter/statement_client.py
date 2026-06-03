@@ -306,10 +306,7 @@ def dump_raw_statement(client_id: str, client_secret: str) -> tuple[dict | None,
         else:
             body = _get(token, RAMP_STATEMENTS_URL, params=params)
 
-        for stmt in body.get("data", []):
-            status = (stmt.get("payment_status") or stmt.get("status") or "").upper()
-            if status == "PAID":
-                candidates.append(stmt)
+        candidates.extend(body.get("data", []))
 
         next_url = body.get("page", {}).get("next")
         if not next_url:
@@ -319,9 +316,12 @@ def dump_raw_statement(client_id: str, client_secret: str) -> tuple[dict | None,
     if not candidates:
         return None, []
 
-    # Return the most recent paid statement
+    # Return the most recent statement regardless of status so field names are visible
     candidates.sort(
-        key=lambda s: s.get("period_start") or s.get("start_date") or "",
+        key=lambda s: (
+            s.get("period_start") or s.get("start_date")
+            or s.get("created_at") or ""
+        ),
         reverse=True,
     )
     stmt = candidates[0]
