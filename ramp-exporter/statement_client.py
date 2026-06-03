@@ -1,29 +1,30 @@
 """
 Ramp API client for card statements.
 
-Fetches paid statements and re-derives the card-transaction invoice numbers
+Fetches closed statements and re-derives the card-transaction invoice numbers
 (using the same formula as ramp_client.py) so the Payments Journal CSV can
 reference them and clear the open AP invoices created by the Purchases Journal
 import.
 
 Run  python card_payment.py --dump-raw  to inspect raw JSON before going live.
 
-Key field locations (verify with --dump-raw against a live statement):
-  - Statement ID:     statement["id"]
-  - Payment status:   statement["payment_status"]  ("PAID" / "UNPAID" / "OVERDUE")
-  - Period start:     statement["period_start"]     (ISO datetime)
-  - Period end:       statement["period_end"]        (ISO datetime)
-  - Payment date:     statement["paid_at"]           (fallback: due_date)
-  - Statement total:  statement["total_due"]["amount"] / minor_unit_conversion_rate
+Key field locations (confirmed from live API):
+  - Statement ID:        statement["id"]
+  - Period start:        statement["start_date"]      (ISO datetime)
+  - Period end:          statement["end_date"]         (ISO datetime, = due/payment date)
+  - Transactions:        statement["statement_lines"][]["id"]  (type="CARD_TRANSACTION")
+  - Entity ID (filter):  statement["balance_sections"][0]["entity_id"]
 
-Transactions are fetched separately via the /transactions endpoint filtered
-by the statement's period (from_date / to_date).  If the Ramp API exposes a
-direct statement→transactions relationship (e.g. a statement_id filter or an
-embedded list), switch to that — it will be visible in --dump-raw output.
+Filtering:
+  - Closed statements: end_date < now  (no payment_status field in the API)
+  - Card program:      set CARD_PAYMENT_ENTITY_ID in .env to the entity_id from
+                       your Ramp Card statements to exclude Subscription statements.
+                       Find it in --dump-raw output under balance_sections[0].entity_id.
 """
 
 import datetime
 import logging
+import os
 import requests
 
 RAMP_TOKEN_URL = "https://api.ramp.com/developer/v1/token"
@@ -68,6 +69,57 @@ def _format_date(raw: str) -> str:
         return raw[:10]
 
 
+def _is_closed(stmt: dict) -> bool:
+    """Return True if the statement period has ended (end_date is in the past)."""
+    end_raw = stmt.get("end_date") or stmt.get("period_end") or ""
+    if not end_raw:
+        return False
+    try:
+        dt = datetime.datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+        return dt < datetime.datetime.now(datetime.timezone.utc)
+    except Exception:
+        return False
+
+
+def _matches_entity_filter(stmt: dict) -> bool:
+    """
+    If CARD_PAYMENT_ENTITY_ID is set, only include statements whose
+    balance_sections contain that entity_id.  Use this to exclude
+    Subscription statements from the Ramp Card payment export.
+
+    Set CARD_PAYMENT_ENTITY_ID to the value shown in --dump-raw under
+    balance_sections[0].entity_id for a Ramp Card statement.
+    """
+    entity_filter = os.getenv("CARD_PAYMENT_ENTITY_ID", "").strip()
+    if not entity_filter:
+        return True
+    for section in stmt.get("balance_sections") or []:
+        if section.get("entity_id") == entity_filter:
+            return True
+    return False
+
+
+def _statement_tx_ids(stmt: dict) -> set[str]:
+    """Extract CARD_TRANSACTION IDs directly from statement_lines."""
+    return {
+        line["id"]
+        for line in (stmt.get("statement_lines") or [])
+        if line.get("type") == "CARD_TRANSACTION"
+    }
+
+
+def _statement_payment_date(stmt: dict) -> str:
+    """Return the statement payment date.  end_date = due/settlement date."""
+    raw = stmt.get("end_date") or stmt.get("period_end") or stmt.get("due_date") or ""
+    return _format_date(raw)
+
+
+def _statement_check_number(stmt: dict) -> str:
+    """Last 20 chars of the statement ID — fits Sage 50's Check Number field."""
+    sid = stmt.get("id") or ""
+    return sid[-20:] if sid else ""
+
+
 def _vendor_id(tx: dict) -> str:
     """Vendor ID from top-level accounting_field_selections (type MERCHANT)."""
     for sel in tx.get("accounting_field_selections") or []:
@@ -81,14 +133,29 @@ def _vendor_name(tx: dict) -> str:
 
 
 def _tx_amount(tx: dict) -> float:
-    amt = tx.get("amount", 0)
-    if isinstance(amt, dict):
-        return amt.get("amount", 0) / amt.get("minor_unit_conversion_rate", 100)
-    return float(amt)
+    """
+    Total transaction amount in dollars.
+
+    Uses line_items (same logic as ramp_client.py) when present so the amount
+    matches exactly what main.py put on the invoice.  Falls back to the
+    top-level 'amount' field which Ramp stores in display units (not minor units).
+    """
+    line_items = tx.get("line_items") or []
+    if line_items:
+        total = 0.0
+        for item in line_items:
+            amt = item.get("amount") or {}
+            if isinstance(amt, dict):
+                total += amt.get("amount", 0) / amt.get("minor_unit_conversion_rate", 100)
+            else:
+                total += float(amt)
+        return total
+    # Top-level amount is already in display units (confirmed from live API)
+    return float(tx.get("amount", 0))
 
 
 def _invoice_number(tx: dict) -> str:
-    """Regenerate the same invoice number that main.py / sage_formatter would produce."""
+    """Regenerate the same invoice number that main.py produces."""
     vendor = _vendor_id(tx)
     raw_date = tx.get("accounting_date") or tx.get("user_transaction_time") or ""
     date_str = _format_date(raw_date)
@@ -98,50 +165,33 @@ def _invoice_number(tx: dict) -> str:
     return f"{vendor[:9]}.{date_compact}.{short_id}"
 
 
-def _statement_payment_date(stmt: dict) -> str:
-    """Return the statement payment date, falling back to due_date."""
-    raw = (
-        stmt.get("paid_at")
-        or stmt.get("payment_date")
-        or stmt.get("due_date")
-        or ""
-    )
-    return _format_date(raw)
-
-
-def _statement_check_number(stmt: dict) -> str:
-    """Return a short, stable check-number for the statement payment."""
-    sid = stmt.get("id") or ""
-    # Use last 20 chars of the statement ID to fit Sage 50's Check Number field
-    return sid[-20:] if sid else ""
-
-
 def _fetch_transactions_for_statement(token: str, stmt: dict) -> list[dict]:
     """
-    Fetch all card transactions that fall within the statement's period.
+    Fetch the full transaction objects for every CARD_TRANSACTION in the statement.
 
-    Tries the date-range approach (from_date / to_date) which is reliable
-    across API versions.  If the statements API embeds a 'transactions' list
-    or exposes a statement_id filter, switch to that instead — verify with
-    --dump-raw.
+    Uses the transaction IDs from statement_lines to filter a date-range
+    fetch — more reliable than date range alone.
     """
-    period_start = stmt.get("period_start") or stmt.get("start_date") or ""
-    period_end = stmt.get("period_end") or stmt.get("end_date") or ""
-
-    if not period_start:
+    tx_ids = _statement_tx_ids(stmt)
+    if not tx_ids:
         return []
 
-    # Normalise to full ISO datetime strings as Ramp requires
-    if len(period_start) == 10:
-        period_start = period_start + "T00:00:00Z"
-    if period_end and len(period_end) == 10:
-        period_end = period_end + "T23:59:59Z"
+    start_raw = stmt.get("start_date") or stmt.get("period_start") or ""
+    end_raw = stmt.get("end_date") or stmt.get("period_end") or ""
 
-    params: dict = {"page_size": 100, "from_date": period_start}
-    if period_end:
-        params["to_date"] = period_end
+    if not start_raw:
+        return []
 
-    txns: list[dict] = []
+    if len(start_raw) == 10:
+        start_raw += "T00:00:00Z"
+    if end_raw and len(end_raw) == 10:
+        end_raw += "T23:59:59Z"
+
+    params: dict = {"page_size": 100, "from_date": start_raw}
+    if end_raw:
+        params["to_date"] = end_raw
+
+    fetched: list[dict] = []
     next_url = None
 
     while True:
@@ -150,40 +200,42 @@ def _fetch_transactions_for_statement(token: str, stmt: dict) -> list[dict]:
         else:
             body = _get(token, RAMP_TRANSACTIONS_URL, params=params)
 
-        txns.extend(body.get("data", []))
+        for tx in body.get("data", []):
+            if tx["id"] in tx_ids:
+                fetched.append(tx)
+
         next_url = body.get("page", {}).get("next")
         if not next_url:
             break
 
-    return txns
+    return fetched
 
 
 def _build_payment_rows(stmt: dict, txns: list[dict]) -> list[dict]:
     """
     Convert a statement + its transactions into Payments Journal row dicts,
-    grouped by vendor.  One logical "check" per vendor, N rows (one per invoice).
+    grouped by vendor.  One logical payment per vendor, N rows (one per invoice).
     """
     payment_date = _statement_payment_date(stmt)
     check_number = _statement_check_number(stmt)
-    period = stmt.get("period_start") or ""
-    # Human-readable memo: "Ramp Card Payment May 2026"
+
+    start_raw = stmt.get("start_date") or ""
     try:
-        dt = datetime.datetime.fromisoformat(period.replace("Z", "+00:00"))
+        dt = datetime.datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
         memo = f"Ramp Card Payment {dt.strftime('%B %Y')}"
     except Exception:
         memo = "Ramp Card Payment"
 
-    # Build per-invoice records keyed by vendor
+    # Group by vendor_id
     by_vendor: dict[str, list[dict]] = {}
     for tx in txns:
         vid = _vendor_id(tx)
         if not vid:
-            continue  # no vendor ID → can't apply payment to an invoice
+            continue
         by_vendor.setdefault(vid, []).append(tx)
 
     rows = []
     for vid, vendor_txns in by_vendor.items():
-        # Sort transactions within vendor by date for consistent ordering
         vendor_txns.sort(
             key=lambda t: t.get("accounting_date") or t.get("user_transaction_time") or ""
         )
@@ -222,16 +274,12 @@ def fetch_paid_statements(
     skip_ids: set[str],
 ) -> tuple[list[dict], list[str]]:
     """
-    Fetch paid statements not yet exported, expand into Payments Journal rows.
+    Fetch closed statements not yet exported, expand into Payments Journal rows.
     Returns (payment_rows, statement_ids).
-
-    payment_rows — passed to card_payment_formatter.build_csv()
-    statement_ids — IDs of statements included, for state-file tracking
     """
     log = logging.getLogger(__name__)
     token = _get_token(client_id, client_secret)
 
-    # Collect all paid statements not already exported
     statements: list[dict] = []
     next_url = None
     params: dict = {"page_size": 100}
@@ -243,9 +291,9 @@ def fetch_paid_statements(
             body = _get(token, RAMP_STATEMENTS_URL, params=params)
 
         for stmt in body.get("data", []):
-            # Filter: must be paid and not already exported
-            status = (stmt.get("payment_status") or stmt.get("status") or "").upper()
-            if status != "PAID":
+            if not _is_closed(stmt):
+                continue
+            if not _matches_entity_filter(stmt):
                 continue
             if stmt["id"] in skip_ids:
                 continue
@@ -256,8 +304,7 @@ def fetch_paid_statements(
             break
         params = {}
 
-    # Sort oldest-first by period start
-    statements.sort(key=lambda s: s.get("period_start") or s.get("start_date") or "")
+    statements.sort(key=lambda s: s.get("start_date") or s.get("period_start") or "")
 
     all_rows: list[dict] = []
     stmt_ids: list[str] = []
@@ -265,7 +312,7 @@ def fetch_paid_statements(
     for stmt in statements:
         txns = _fetch_transactions_for_statement(token, stmt)
         if not txns:
-            log.warning("Statement %s has no transactions — skipping.", stmt["id"])
+            log.warning("Statement %s: no transactions found — skipping.", stmt["id"])
             continue
 
         rows = _build_payment_rows(stmt, txns)
@@ -275,12 +322,13 @@ def fetch_paid_statements(
             )
             continue
 
-        unique_txns = len(txns)
         unique_vendors = len({r["vendor_id"] for r in rows})
         log.info(
-            "Statement %s: %d transaction(s), %d vendor(s), payment date %s",
+            "Statement %s (%s – %s): %d transaction(s), %d vendor(s), payment date %s",
             stmt["id"],
-            unique_txns,
+            _format_date(stmt.get("start_date") or ""),
+            _format_date(stmt.get("end_date") or ""),
+            len(txns),
             unique_vendors,
             rows[0]["payment_date"] if rows else "?",
         )
@@ -291,10 +339,7 @@ def fetch_paid_statements(
 
 
 def dump_raw_statement(client_id: str, client_secret: str) -> tuple[dict | None, list[dict]]:
-    """
-    Return the most recent paid statement and its transactions for inspection.
-    Used by  card_payment.py --dump-raw.
-    """
+    """Return the most recent closed statement and its transactions for inspection."""
     token = _get_token(client_id, client_secret)
     params: dict = {"page_size": 100}
     candidates: list[dict] = []
@@ -306,7 +351,9 @@ def dump_raw_statement(client_id: str, client_secret: str) -> tuple[dict | None,
         else:
             body = _get(token, RAMP_STATEMENTS_URL, params=params)
 
-        candidates.extend(body.get("data", []))
+        for stmt in body.get("data", []):
+            if _is_closed(stmt):
+                candidates.append(stmt)
 
         next_url = body.get("page", {}).get("next")
         if not next_url:
@@ -316,12 +363,8 @@ def dump_raw_statement(client_id: str, client_secret: str) -> tuple[dict | None,
     if not candidates:
         return None, []
 
-    # Return the most recent statement regardless of status so field names are visible
     candidates.sort(
-        key=lambda s: (
-            s.get("period_start") or s.get("start_date")
-            or s.get("created_at") or ""
-        ),
+        key=lambda s: s.get("start_date") or s.get("period_start") or "",
         reverse=True,
     )
     stmt = candidates[0]
