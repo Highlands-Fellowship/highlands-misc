@@ -1,0 +1,605 @@
+/- Twilio SMS Dashboard — Rock RMS HTML Block -/
+
+/- Step 1: credentials from Communication Transport -/
+{%- sql return:'twilioAttrs' -%}
+    SELECT
+        a.[Key]
+        , av.[Value]
+    FROM
+        [AttributeValue] av
+        INNER JOIN [Attribute] a ON a.[Id] = av.[AttributeId]
+        INNER JOIN [EntityType] et ON et.[Id] = a.[EntityTypeId]
+    WHERE
+        et.[Name] IN (
+            'Rock.Communication.Transport.Twilio'
+            , 'Rock.Communication.Transport.TwilioSms'
+        )
+        AND a.[Key] IN ( 'SID', 'Token' )
+    ;
+{%- endsql -%}
+
+{%- assign twilioSid = '' -%}
+{%- assign twilioToken = '' -%}
+
+{%- for attr in twilioAttrs -%}
+    {%- if attr.Key == 'SID' -%}
+        {%- assign twilioSid = attr.Value -%}
+    {%- endif -%}
+    {%- if attr.Key == 'Token' -%}
+        {%- assign twilioToken = attr.Value -%}
+    {%- endif -%}
+{%- endfor -%}
+
+/- Step 2: active SMS phone numbers -/
+{%- sql return:'phoneNumbers' -%}
+    SELECT
+        [Name]
+        , [Number]
+    FROM
+        [SystemPhoneNumber]
+    WHERE
+        [IsActive] = 1
+    ORDER BY
+        [Order]
+        , [Name]
+    ;
+{%- endsql -%}
+
+/- Step 3: GSAP + config injection -/
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" integrity="sha512-7eHRwcbYkK4d9g/6tD/mhkf++eoTHwpNM9woBxtPUBWm67zeAfFC+HrdoE2GanKeocly/VxeLvIqwvCdk7qScg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+<script>
+window._tdCfg = {
+    sid: "{{ twilioSid | Trim }}",
+    tok: "{{ twilioToken | Trim }}",
+    numbers: [
+        {%- for n in phoneNumbers -%}
+            { "name": "{{ n.Name | Replace:'"','' | Trim }}", "number": "{{ n.Number | Trim }}" }{% unless forloop.last %},{% endunless %}
+        {%- endfor -%}
+    ]
+};
+</script>
+
+<div class="panel panel-block">
+    <div class="panel-heading">
+        <h1 class="panel-title">
+            <i class="ti ti-messages"></i> SMS Dashboard
+        </h1>
+    </div>
+    <div class="panel-body">
+
+        <div class="d-flex align-items-center justify-content-between flex-wrap mb-4">
+            <ul class="nav nav-pills" id="td-tabs" role="tablist">
+                <li role="presentation" class="active"><a href="#" data-days="30">Last 30 Days</a></li>
+                <li role="presentation"><a href="#" data-days="60">Last 60 Days</a></li>
+                <li role="presentation"><a href="#" data-days="90">Last 90 Days</a></li>
+            </ul>
+            <button class="btn btn-sm btn-default mt-2" id="td-filter-btn" style="display:none;">
+                <i class="ti ti-eye" id="td-filter-icon"></i>
+                <span id="td-filter-label">Show All</span>
+            </button>
+        </div>
+
+        <div id="td-error" class="alert alert-warning" style="display:none;">
+            <i class="ti ti-alert-triangle"></i>
+            <strong>Error:</strong> <span id="td-error-msg"></span>
+        </div>
+
+        <div id="td-loading" style="display:none; padding:48px; text-align:center;">
+            <i class="ti ti-loader" id="td-spinner" style="font-size:2.5rem;"></i>
+            <p class="text-muted mt-3">Loading SMS data&hellip;</p>
+        </div>
+
+        <div id="td-content" style="display:none;">
+
+            /- ── Aggregate KPIs ─────────────────────────────────── -/
+            <div class="row" id="td-kpi-row">
+                <div class="col-md-3 col-sm-6 mb-3">
+                    <div class="card shadow-sm rounded p-3">
+                        <div class="kpi kpi-lg">
+                            <div class="kpi-icon mr-3"><i class="ti ti-message"></i></div>
+                            <div class="kpi-body">
+                                <div class="kpi-label">Messages Sent</div>
+                                <div class="kpi-value" id="td-total-sent">0</div>
+                                <div class="kpi-trailing-text" id="td-range-label-1"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6 mb-3">
+                    <div class="card shadow-sm rounded p-3">
+                        <div class="kpi kpi-lg">
+                            <div class="kpi-icon mr-3"><i class="ti ti-inbox"></i></div>
+                            <div class="kpi-body">
+                                <div class="kpi-label">Messages Received</div>
+                                <div class="kpi-value" id="td-total-received">0</div>
+                                <div class="kpi-trailing-text" id="td-range-label-2"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6 mb-3">
+                    <div class="card shadow-sm rounded p-3">
+                        <div class="kpi kpi-lg">
+                            <div class="kpi-icon mr-3"><i class="ti ti-list-numbers"></i></div>
+                            <div class="kpi-body">
+                                <div class="kpi-label">Segments Used</div>
+                                <div class="kpi-value" id="td-total-segments">0</div>
+                                <div class="kpi-trailing-text" id="td-range-label-3"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6 mb-3">
+                    <div class="card shadow-sm rounded p-3">
+                        <div class="kpi kpi-lg">
+                            <div class="kpi-icon mr-3"><i class="ti ti-currency-dollar"></i></div>
+                            <div class="kpi-body">
+                                <div class="kpi-label">Total Cost</div>
+                                <div class="kpi-value" id="td-total-cost">$0.00</div>
+                                <div class="kpi-trailing-text" id="td-range-label-4"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            /- ── Per-number section ──────────────────────────────── -/
+            <div id="td-numbers-section" class="mt-4">
+                <div class="d-flex align-items-center justify-content-between mb-3">
+                    <h4 class="m-0">By Phone Number</h4>
+                    <small class="text-muted" id="td-numbers-summary"></small>
+                </div>
+                <div class="row" id="td-numbers"></div>
+            </div>
+
+            /- ── Flagged messages section ────────────────────────── -/
+            <div id="td-flagged-section" class="mt-4">
+                <div class="d-flex align-items-center justify-content-between mb-3">
+                    <h4 class="m-0">
+                        <i class="ti ti-alert-triangle"></i>
+                        Messages to Review
+                        <span id="td-flagged-badge" class="label label-warning ml-1" style="display:none;"></span>
+                    </h4>
+                    <small class="text-muted">Outbound only &nbsp;&bull;&nbsp; 3+ segments or cost &gt; $0.10</small>
+                </div>
+                <div id="td-flagged-clear" class="alert alert-success" style="display:none;">
+                    <i class="ti ti-circle-check"></i> No flagged messages for the selected period.
+                </div>
+                <div id="td-flagged-table" class="table-responsive" style="display:none;">
+                    <table class="table table-condensed table-hover">
+                        <thead>
+                            <tr>
+                                <th>Number</th>
+                                <th>Dir</th>
+                                <th>Date</th>
+                                <th>Recipient / Sender</th>
+                                <th class="text-center">Segs</th>
+                                <th class="text-right">Cost</th>
+                                <th>Message Preview</th>
+                            </tr>
+                        </thead>
+                        <tbody id="td-flagged-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+
+    var cfg          = window._tdCfg || {};
+    var sid          = cfg.sid || '';
+    var tok          = cfg.tok || '';
+    var currentStats = [];
+    var showActive   = true;   /- default: inactive numbers hidden -/
+    var isFirstLoad  = true;
+    var spinTween    = null;
+
+    var SEGMENT_FLAG = 3;     /- outbound messages with this many segments or more are flagged -/
+    var COST_FLAG    = 0.10;  /- messages costing this much or more (USD) are flagged -/
+
+    /* ── DOM helpers ──────────────────────────────────── */
+    function el(id) { return document.getElementById(id); }
+
+    function showError(msg) {
+        stopSpinner();
+        el('td-loading').style.display = 'none';
+        el('td-content').style.display = 'none';
+        el('td-error-msg').textContent  = msg;
+        el('td-error').style.display   = 'block';
+    }
+
+    function startSpinner() {
+        gsap.set('#td-spinner', { rotation: 0 });
+        spinTween = gsap.to('#td-spinner', { rotation: 360, duration: 1.2, repeat: -1, ease: 'none' });
+    }
+
+    function stopSpinner() {
+        if (spinTween) { spinTween.kill(); spinTween = null; }
+    }
+
+    function showLoading() {
+        el('td-error').style.display = 'none';
+        var content = el('td-content');
+        if (content.style.display !== 'none') {
+            gsap.to(content, {
+                opacity: 0, duration: 0.2, ease: 'power1.in',
+                onComplete: function () {
+                    content.style.display = 'none';
+                    gsap.set(content, { opacity: 1 });
+                    el('td-loading').style.display = 'block';
+                    startSpinner();
+                }
+            });
+        } else {
+            el('td-loading').style.display = 'block';
+            startSpinner();
+        }
+    }
+
+    function showContent() {
+        stopSpinner();
+        el('td-loading').style.display = 'none';
+        el('td-error').style.display   = 'none';
+        var content = el('td-content');
+        content.style.display = 'block';
+        gsap.fromTo(content, { opacity: 0 }, { opacity: 1, duration: 0.35, ease: 'power2.out' });
+    }
+
+    /* ── Formatting ───────────────────────────────────── */
+    function fmtDate(d) {
+        return d.getFullYear() + '-' +
+            String(d.getMonth() + 1).padStart(2, '0') + '-' +
+            String(d.getDate()).padStart(2, '0');
+    }
+
+    function fmtNum(n)  { return Math.round(Number(n)).toLocaleString(); }
+    function fmtCost(n) { return '$' + Math.abs(Number(n)).toFixed(2); }
+
+    function fmtTwilioDate(str) {
+        if (!str) return '';
+        try {
+            var d = new Date(str);
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        } catch (e) { return ''; }
+    }
+
+    function escHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function segLabel(n) {
+        var cls = n >= 5 ? 'label-danger' : 'label-warning';
+        return '<span class="label ' + cls + '">' + n + '</span>';
+    }
+
+    function dateRange(days) {
+        var end   = new Date();
+        var start = new Date();
+        start.setDate(start.getDate() - days);
+        return { start: fmtDate(start), end: fmtDate(end) };
+    }
+
+    /* ── GSAP count-up ────────────────────────────────── */
+    function countUp(id, target, formatter) {
+        var obj  = { v: 0 };
+        var elem = el(id);
+        gsap.killTweensOf(obj);
+        gsap.to(obj, {
+            v: target, duration: 1.4, ease: 'power3.out',
+            onUpdate: function () { elem.textContent = formatter(obj.v); }
+        });
+    }
+
+    function animateCards(container) {
+        var cards = container.querySelectorAll('.td-card');
+        if (!cards.length) return;
+        gsap.from(cards, {
+            opacity: 0, y: 16,
+            stagger: { amount: Math.min(cards.length * 0.04, 0.6), from: 'start' },
+            duration: 0.4, ease: 'power2.out',
+            clearProps: 'opacity,transform'
+        });
+        container.querySelectorAll('.td-progress-fill').forEach(function (bar) {
+            var target = parseFloat(bar.getAttribute('data-pct') || 0);
+            gsap.fromTo(bar,
+                { width: '0%' },
+                { width: target + '%', duration: 0.9, ease: 'power2.out', delay: 0.25 }
+            );
+        });
+    }
+
+    /* ── Twilio API ───────────────────────────────────── */
+    function authHeader() { return 'Basic ' + btoa(sid + ':' + tok); }
+
+    async function twilioGet(path, params) {
+        var qs  = params ? ('?' + new URLSearchParams(params).toString()) : '';
+        var res = await fetch('https://api.twilio.com' + path + qs, {
+            headers: { 'Authorization': authHeader() }
+        });
+        if (!res.ok) {
+            var body = await res.text();
+            throw new Error('Twilio HTTP ' + res.status + ' — ' + body.substring(0, 120));
+        }
+        return res.json();
+    }
+
+    async function fetchAllMessages(params) {
+        var msgs = [];
+        var data = await twilioGet('/2010-04-01/Accounts/' + sid + '/Messages.json', params);
+        msgs = msgs.concat(data.messages || []);
+        while (data.next_page_uri) {
+            data = await twilioGet(data.next_page_uri);
+            msgs = msgs.concat(data.messages || []);
+        }
+        return msgs;
+    }
+
+    async function fetchNumberStats(numInfo, startStr, endStr) {
+        /- Fetch messages where this number appears as From OR To, then deduplicate
+           by SID and split using Twilio's direction field. This correctly handles
+           numbers that are not Twilio-owned: From: externalNumber returns inbound
+           messages (direction=inbound), not sent ones. -/
+        var fromParams = { From: numInfo.number, PageSize: '1000' };
+        fromParams['DateSent>='] = startStr;
+        fromParams['DateSent<='] = endStr;
+
+        var toParams = { To: numInfo.number, PageSize: '1000' };
+        toParams['DateSent>='] = startStr;
+        toParams['DateSent<='] = endStr;
+
+        var both = await Promise.all([ fetchAllMessages(fromParams), fetchAllMessages(toParams) ]);
+
+        var seen = new Set();
+        var allMsgs = both[0].concat(both[1]).filter(function (m) {
+            if (!m.sid || seen.has(m.sid)) return false;
+            seen.add(m.sid);
+            return true;
+        });
+
+        var outMsgs = allMsgs.filter(function (m) { return m.direction && m.direction.indexOf('outbound') === 0; });
+        var inMsgs  = allMsgs.filter(function (m) { return m.direction === 'inbound'; });
+
+        var segs = 0, cost = 0;
+        var flagged = [];
+
+        outMsgs.forEach(function (m) {
+            var s = parseInt(m.num_segments || 1, 10);
+            var c = Math.abs(parseFloat(m.price || 0));
+            segs += s;
+            cost += c;
+            if (s >= SEGMENT_FLAG || c >= COST_FLAG) {
+                flagged.push({
+                    numberName: numInfo.name || numInfo.number,
+                    numberNum:  numInfo.number,
+                    direction:  'Sent',
+                    peer:       m.to || '',
+                    dateSent:   m.date_sent || '',
+                    segments:   s,
+                    cost:       c,
+                    body:       String(m.body || '').replace(/\s+/g, ' ').trim()
+                });
+            }
+        });
+
+
+        return {
+            name:     numInfo.name || '',
+            number:   numInfo.number,
+            sent:     outMsgs.length,
+            received: inMsgs.length,
+            segments: segs,
+            cost:     Math.abs(cost),
+            flagged:  flagged
+        };
+    }
+
+    /* ── Per-number card rendering ────────────────────── */
+    function buildNumberCard(stat, maxActivity) {
+        var activity = stat.sent + stat.received;
+        var pct      = maxActivity > 0 ? Math.round((activity / maxActivity) * 100) : 0;
+        var title    = stat.name || stat.number;
+        var subtitle = stat.name ? stat.number : '';
+        var inactive = stat.sent === 0 && stat.received === 0;
+        var opacity  = inactive ? '0.5' : '1';
+
+        return `
+            <div class="col-md-4 col-sm-6 mb-3">
+                <div class="card shadow-sm td-card" style="overflow:hidden; opacity:${opacity};">
+                    <div style="height:4px; background:#eee;">
+                        <div class="progress-bar td-progress-fill" data-pct="${pct}"
+                             style="height:100%; width:0%; transition:none;" role="progressbar"></div>
+                    </div>
+                    <div class="card-body">
+                        <strong class="d-block text-truncate" title="${escHtml(title)}">${escHtml(title)}</strong>
+                        ${subtitle ? `<small class="text-muted d-block text-truncate">${escHtml(subtitle)}</small>` : ''}
+                        <div class="row text-center mt-3">
+                            <div class="col-xs-3">
+                                <div class="small text-muted">Sent</div>
+                                <div class="h5 text-primary m-0">${fmtNum(stat.sent)}</div>
+                            </div>
+                            <div class="col-xs-3">
+                                <div class="small text-muted">Rcvd</div>
+                                <div class="h5 text-primary m-0">${fmtNum(stat.received)}</div>
+                            </div>
+                            <div class="col-xs-3">
+                                <div class="small text-muted">Segs</div>
+                                <div class="h5 text-primary m-0">${fmtNum(stat.segments)}</div>
+                            </div>
+                            <div class="col-xs-3">
+                                <div class="small text-muted">Cost</div>
+                                <div class="h5 text-primary m-0">${fmtCost(stat.cost)}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderCards(stats) {
+        var visible     = showActive
+            ? stats.filter(function (s) { return s.sent > 0 || s.received > 0; })
+            : stats;
+        var maxActivity = Math.max.apply(null, stats.map(function (s) { return s.sent + s.received; })) || 1;
+        var container   = el('td-numbers');
+
+        container.innerHTML = visible.map(function (s) {
+            return buildNumberCard(s, maxActivity);
+        }).join('');
+
+        animateCards(container);
+
+        var activeCount = stats.filter(function (s) { return s.sent > 0 || s.received > 0; }).length;
+        el('td-numbers-summary').textContent = activeCount + ' of ' + stats.length + ' active';
+
+        var hasInactive = stats.some(function (s) { return s.sent === 0 && s.received === 0; });
+        el('td-filter-btn').style.display = hasInactive ? '' : 'none';
+        el('td-filter-icon').className    = 'ti ' + (showActive ? 'ti-eye' : 'ti-eye-off');
+        el('td-filter-label').textContent = showActive ? 'Show All' : 'Hide Inactive';
+    }
+
+    /* ── Flagged messages rendering ───────────────────── */
+    function renderFlagged(flagged) {
+        var badge     = el('td-flagged-badge');
+        var clearMsg  = el('td-flagged-clear');
+        var tableWrap = el('td-flagged-table');
+        var tbody     = el('td-flagged-body');
+
+        if (!flagged.length) {
+            badge.style.display     = 'none';
+            tableWrap.style.display = 'none';
+            clearMsg.style.display  = '';
+            return;
+        }
+
+        clearMsg.style.display  = 'none';
+        badge.style.display     = '';
+        badge.textContent       = flagged.length;
+        tableWrap.style.display = '';
+
+        tbody.innerHTML = flagged.map(function (f) {
+            var bodyShort = f.body.length > 70 ? f.body.substring(0, 70) + '…' : f.body;
+            var dirClass  = f.direction === 'Sent' ? 'text-primary' : 'text-muted';
+            return '<tr>' +
+                '<td>' +
+                    '<span class="text-truncate d-block" style="max-width:130px;" title="' + escHtml(f.numberName) + '">' + escHtml(f.numberName) + '</span>' +
+                    (f.numberName !== f.numberNum ? '<small class="text-muted">' + escHtml(f.numberNum) + '</small>' : '') +
+                '</td>' +
+                '<td><small class="' + dirClass + '">' + escHtml(f.direction) + '</small></td>' +
+                '<td><small class="text-nowrap">' + escHtml(fmtTwilioDate(f.dateSent)) + '</small></td>' +
+                '<td><small class="text-muted">' + escHtml(f.peer) + '</small></td>' +
+                '<td class="text-center">' + segLabel(f.segments) + '</td>' +
+                '<td class="text-right text-nowrap"><small>' + (f.cost > 0 ? fmtCost(f.cost) : '—') + '</small></td>' +
+                '<td><small class="text-muted text-truncate d-inline-block" style="max-width:220px;" title="' + escHtml(f.body) + '">' + escHtml(bodyShort) + '</small></td>' +
+                '</tr>';
+        }).join('');
+
+        gsap.from('#td-flagged-section', { opacity: 0, y: 12, duration: 0.4, ease: 'power2.out', clearProps: 'opacity,transform' });
+    }
+
+    /* ── Main load ────────────────────────────────────── */
+    async function loadDashboard(days) {
+        showLoading();
+        var range     = dateRange(days);
+        var rangeText = 'Last ' + days + ' days';
+
+        try {
+            var numberStats = [];
+
+            if (cfg.numbers && cfg.numbers.length > 0) {
+                numberStats = await Promise.all(
+                    cfg.numbers.map(function (n) {
+                        return fetchNumberStats(n, range.start, range.end);
+                    })
+                );
+                numberStats.sort(function (a, b) { return b.sent - a.sent; });
+            }
+
+            var totals = numberStats.reduce(function (acc, s) {
+                return {
+                    sent:     acc.sent     + s.sent,
+                    received: acc.received + s.received,
+                    segments: acc.segments + s.segments,
+                    cost:     acc.cost     + s.cost
+                };
+            }, { sent: 0, received: 0, segments: 0, cost: 0 });
+
+            var allFlagged = [];
+            numberStats.forEach(function (s) {
+                allFlagged = allFlagged.concat(s.flagged || []);
+            });
+            allFlagged.sort(function (a, b) {
+                return (b.segments - a.segments) || (b.cost - a.cost);
+            });
+
+            currentStats = numberStats;
+            showContent();
+
+            if (isFirstLoad) {
+                isFirstLoad = false;
+                gsap.from('#td-kpi-row .card', {
+                    opacity: 0, y: 20, stagger: 0.08, duration: 0.5, ease: 'power2.out',
+                    clearProps: 'opacity,transform'
+                });
+            }
+
+            countUp('td-total-sent',     totals.sent,     fmtNum);
+            countUp('td-total-received', totals.received, fmtNum);
+            countUp('td-total-segments', totals.segments, fmtNum);
+            countUp('td-total-cost',     totals.cost,     fmtCost);
+            el('td-range-label-1').textContent = rangeText;
+            el('td-range-label-2').textContent = rangeText;
+            el('td-range-label-3').textContent = rangeText;
+            el('td-range-label-4').textContent = rangeText;
+
+            var numSec = el('td-numbers-section');
+            if (numberStats.length > 0) {
+                numSec.style.display = '';
+                renderCards(currentStats);
+            } else {
+                numSec.style.display = 'none';
+            }
+
+            renderFlagged(allFlagged);
+
+        } catch (err) {
+            showError(err.message);
+        }
+    }
+
+    /* ── Event listeners ──────────────────────────────── */
+    el('td-tabs').addEventListener('click', function (e) {
+        e.preventDefault();
+        var a = e.target;
+        if (a.tagName !== 'A' || !a.dataset.days) return;
+        Array.prototype.forEach.call(
+            this.querySelectorAll('li'),
+            function (li) { li.classList.remove('active'); }
+        );
+        a.parentElement.classList.add('active');
+        loadDashboard(parseInt(a.dataset.days, 10));
+    });
+
+    el('td-filter-btn').addEventListener('click', function () {
+        showActive = !showActive;
+        renderCards(currentStats);
+    });
+
+    /* ── Init ─────────────────────────────────────────── */
+    if (!sid || !tok) {
+        showError('Twilio credentials not found. Verify the Twilio Communication Transport is active in Admin Tools → Communications.');
+    } else {
+        loadDashboard(30);
+    }
+
+}());
+</script>
