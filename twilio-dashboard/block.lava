@@ -473,7 +473,7 @@ window._tdCfg = {
         var opacity  = inactive ? '0.5' : '1';
 
         return `
-            <div class="col-12 col-sm-6 col-md-4 mb-4">
+            <div class="col-xs-12 col-sm-6 col-md-4 mb-4">
             <div class="card shadow-sm td-card h-100" style="overflow:hidden; opacity:${opacity};">
                 <div style="height:4px; background:#eee;">
                     <div class="progress-bar td-progress-fill" data-pct="${pct}"
