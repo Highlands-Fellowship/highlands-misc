@@ -379,12 +379,12 @@ window._tdCfg = {
     /- Lightweight fetch for previous-period comparison — counts only, no flagged analysis -/
     async function fetchNumberSummary(numInfo, startStr, endStr) {
         var fromParams = { From: numInfo.number, PageSize: '1000' };
-        fromParams['DateSent>='] = startStr;
-        fromParams['DateSent<='] = endStr;
+        fromParams['DateSent>'] = startStr;
+        fromParams['DateSent<'] = endStr;
 
         var toParams = { To: numInfo.number, PageSize: '1000' };
-        toParams['DateSent>='] = startStr;
-        toParams['DateSent<='] = endStr;
+        toParams['DateSent>'] = startStr;
+        toParams['DateSent<'] = endStr;
 
         var both = await Promise.all([ fetchAllMessages(fromParams), fetchAllMessages(toParams) ]);
 
@@ -413,12 +413,12 @@ window._tdCfg = {
            numbers that are not Twilio-owned: From: externalNumber returns inbound
            messages (direction=inbound), not sent ones. -/
         var fromParams = { From: numInfo.number, PageSize: '1000' };
-        fromParams['DateSent>='] = startStr;
-        fromParams['DateSent<='] = endStr;
+        fromParams['DateSent>'] = startStr;
+        fromParams['DateSent<'] = endStr;
 
         var toParams = { To: numInfo.number, PageSize: '1000' };
-        toParams['DateSent>='] = startStr;
-        toParams['DateSent<='] = endStr;
+        toParams['DateSent>'] = startStr;
+        toParams['DateSent<'] = endStr;
 
         var both = await Promise.all([ fetchAllMessages(fromParams), fetchAllMessages(toParams) ]);
 
