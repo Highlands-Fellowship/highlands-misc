@@ -154,7 +154,7 @@ window._tdCfg = {
                     <h4 class="m-0">By Phone Number</h4>
                     <small class="text-muted" id="td-numbers-summary"></small>
                 </div>
-                <div class="row" id="td-numbers"></div>
+                <div id="td-numbers"></div>
             </div>
 
             /- ── Flagged messages section ────────────────────────── -/
@@ -473,38 +473,36 @@ window._tdCfg = {
         var opacity  = inactive ? '0.5' : '1';
 
         return `
-            <div class="col-md-4 col-sm-6 mb-3">
-                <div class="card shadow-sm td-card" style="overflow:hidden; opacity:${opacity};">
-                    <div style="height:4px; background:#eee;">
-                        <div class="progress-bar td-progress-fill" data-pct="${pct}"
-                             style="height:100%; width:0%; transition:none;" role="progressbar"></div>
-                    </div>
-                    <div class="card-body">
-                        <strong class="d-block text-truncate" title="${escHtml(title)}">${escHtml(title)}</strong>
-                        ${subtitle ? `<small class="text-muted d-block text-truncate">${escHtml(subtitle)}</small>` : ''}
-                        <div class="row text-center mt-3">
-                            <div class="col-xs-3">
-                                <div class="small text-muted">Sent</div>
-                                <div class="h5 text-primary m-0">${fmtNum(stat.sent)}</div>
-                            </div>
-                            <div class="col-xs-3">
-                                <div class="small text-muted">Rcvd</div>
-                                <div class="h5 text-primary m-0">${fmtNum(stat.received)}</div>
-                            </div>
-                            <div class="col-xs-3">
-                                <div class="small text-muted">Segs</div>
-                                <div class="h5 text-primary m-0">${fmtNum(stat.segments)}</div>
-                            </div>
-                            <div class="col-xs-3">
-                                <div class="small text-muted">Cost</div>
-                                <div class="h5 text-primary m-0">${fmtCost(stat.cost)}</div>
-                            </div>
+            <div class="card shadow-sm td-card" style="overflow:hidden; opacity:${opacity};">
+                <div style="height:4px; background:#eee;">
+                    <div class="progress-bar td-progress-fill" data-pct="${pct}"
+                         style="height:100%; width:0%; transition:none;" role="progressbar"></div>
+                </div>
+                <div class="card-body d-flex flex-column">
+                    <strong class="d-block text-truncate" title="${escHtml(title)}">${escHtml(title)}</strong>
+                    ${subtitle ? `<small class="text-muted d-block text-truncate">${escHtml(subtitle)}</small>` : ''}
+                    <div class="row text-center mt-3">
+                        <div class="col-xs-3">
+                            <div class="small text-muted">Sent</div>
+                            <div class="h5 text-primary m-0">${fmtNum(stat.sent)}</div>
                         </div>
-                        ${stat.failed > 0 ? `
-                        <div class="text-center mt-2 pt-2" style="border-top:1px solid #f0f0f0;">
-                            <small class="text-danger"><i class="ti ti-alert-circle"></i> ${stat.failed} failed / undelivered</small>
-                        </div>` : ''}
+                        <div class="col-xs-3">
+                            <div class="small text-muted">Rcvd</div>
+                            <div class="h5 text-primary m-0">${fmtNum(stat.received)}</div>
+                        </div>
+                        <div class="col-xs-3">
+                            <div class="small text-muted">Segs</div>
+                            <div class="h5 text-primary m-0">${fmtNum(stat.segments)}</div>
+                        </div>
+                        <div class="col-xs-3">
+                            <div class="small text-muted">Cost</div>
+                            <div class="h5 text-primary m-0">${fmtCost(stat.cost)}</div>
+                        </div>
                     </div>
+                    ${stat.failed > 0 ? `
+                    <div class="text-center mt-auto pt-2" style="border-top:1px solid #f0f0f0;">
+                        <small class="text-danger"><i class="ti ti-alert-circle"></i> ${stat.failed} failed / undelivered</small>
+                    </div>` : ''}
                 </div>
             </div>
         `;
@@ -517,8 +515,11 @@ window._tdCfg = {
         var maxActivity = Math.max.apply(null, stats.map(function (s) { return s.sent + s.received; })) || 1;
         var container   = el('td-numbers');
 
-        container.innerHTML = visible.map(function (s) {
-            return buildNumberCard(s, maxActivity);
+        var cards = visible.map(function (s) { return buildNumberCard(s, maxActivity); });
+        var groups = [];
+        for (var i = 0; i < cards.length; i += 3) { groups.push(cards.slice(i, i + 3)); }
+        container.innerHTML = groups.map(function (g) {
+            return '<div class="card-group mb-3">' + g.join('') + '</div>';
         }).join('');
 
         animateCards(container);
