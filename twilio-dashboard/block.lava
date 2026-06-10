@@ -101,6 +101,7 @@ window._tdCfg = {
                             <div class="kpi-body">
                                 <div class="kpi-label">Messages Sent</div>
                                 <div class="kpi-value" id="td-total-sent">0</div>
+                                <div id="td-delta-sent" class="small mt-1" style="min-height:1.1em;"></div>
                                 <div class="kpi-trailing-text" id="td-range-label-1"></div>
                             </div>
                         </div>
@@ -113,6 +114,7 @@ window._tdCfg = {
                             <div class="kpi-body">
                                 <div class="kpi-label">Messages Received</div>
                                 <div class="kpi-value" id="td-total-received">0</div>
+                                <div id="td-delta-received" class="small mt-1" style="min-height:1.1em;"></div>
                                 <div class="kpi-trailing-text" id="td-range-label-2"></div>
                             </div>
                         </div>
@@ -125,6 +127,7 @@ window._tdCfg = {
                             <div class="kpi-body">
                                 <div class="kpi-label">Segments Used</div>
                                 <div class="kpi-value" id="td-total-segments">0</div>
+                                <div id="td-delta-segments" class="small mt-1" style="min-height:1.1em;"></div>
                                 <div class="kpi-trailing-text" id="td-range-label-3"></div>
                             </div>
                         </div>
@@ -137,6 +140,7 @@ window._tdCfg = {
                             <div class="kpi-body">
                                 <div class="kpi-label">Total Cost</div>
                                 <div class="kpi-value" id="td-total-cost">$0.00</div>
+                                <div id="td-delta-cost" class="small mt-1" style="min-height:1.1em;"></div>
                                 <div class="kpi-trailing-text" id="td-range-label-4"></div>
                             </div>
                         </div>
@@ -288,6 +292,30 @@ window._tdCfg = {
         return { start: fmtDate(start), end: fmtDate(end) };
     }
 
+    function prevDateRange(days) {
+        var end   = new Date();
+        var start = new Date();
+        end.setDate(end.getDate() - days);
+        start.setDate(start.getDate() - days * 2);
+        return { start: fmtDate(start), end: fmtDate(end) };
+    }
+
+    /- Render period-over-period delta badge into an element.
+       isInverse=true means a decrease is good (e.g. cost). -/
+    function renderDelta(id, current, previous, isInverse) {
+        var elem = el(id);
+        if (!elem) return;
+        if (!previous) { elem.innerHTML = ''; return; }
+        var pct = ((current - previous) / previous) * 100;
+        if (Math.abs(pct) < 0.5) { elem.innerHTML = '<span class="text-muted">no change</span>'; return; }
+        var up      = pct > 0;
+        var good    = isInverse ? !up : up;
+        var cls     = good ? 'text-success' : 'text-danger';
+        var icon    = up ? 'ti-trending-up' : 'ti-trending-down';
+        var sign    = up ? '+' : '−';
+        elem.innerHTML = '<span class="' + cls + '"><i class="ti ' + icon + '"></i> ' + sign + Math.abs(pct).toFixed(0) + '% vs prev</span>';
+    }
+
     /* ── GSAP count-up ────────────────────────────────── */
     function countUp(id, target, formatter) {
         var obj  = { v: 0 };
@@ -343,6 +371,37 @@ window._tdCfg = {
         return msgs;
     }
 
+    /- Lightweight fetch for previous-period comparison — counts only, no flagged analysis -/
+    async function fetchNumberSummary(numInfo, startStr, endStr) {
+        var fromParams = { From: numInfo.number, PageSize: '1000' };
+        fromParams['DateSent>='] = startStr;
+        fromParams['DateSent<='] = endStr;
+
+        var toParams = { To: numInfo.number, PageSize: '1000' };
+        toParams['DateSent>='] = startStr;
+        toParams['DateSent<='] = endStr;
+
+        var both = await Promise.all([ fetchAllMessages(fromParams), fetchAllMessages(toParams) ]);
+
+        var seen = new Set();
+        var allMsgs = both[0].concat(both[1]).filter(function (m) {
+            if (!m.sid || seen.has(m.sid)) return false;
+            seen.add(m.sid);
+            return true;
+        });
+
+        var outMsgs = allMsgs.filter(function (m) { return m.direction && m.direction.indexOf('outbound') === 0; });
+        var inMsgs  = allMsgs.filter(function (m) { return m.direction === 'inbound'; });
+
+        var segs = 0, cost = 0;
+        outMsgs.forEach(function (m) {
+            segs += parseInt(m.num_segments || 1, 10);
+            cost += Math.abs(parseFloat(m.price || 0));
+        });
+
+        return { sent: outMsgs.length, received: inMsgs.length, segments: segs, cost: Math.abs(cost) };
+    }
+
     async function fetchNumberStats(numInfo, startStr, endStr) {
         /- Fetch messages where this number appears as From OR To, then deduplicate
            by SID and split using Twilio's direction field. This correctly handles
@@ -368,7 +427,7 @@ window._tdCfg = {
         var outMsgs = allMsgs.filter(function (m) { return m.direction && m.direction.indexOf('outbound') === 0; });
         var inMsgs  = allMsgs.filter(function (m) { return m.direction === 'inbound'; });
 
-        var segs = 0, cost = 0;
+        var segs = 0, cost = 0, failed = 0;
         var flagged = [];
 
         outMsgs.forEach(function (m) {
@@ -376,6 +435,7 @@ window._tdCfg = {
             var c = Math.abs(parseFloat(m.price || 0));
             segs += s;
             cost += c;
+            if (m.status === 'failed' || m.status === 'undelivered') { failed++; }
             if (s >= SEGMENT_FLAG || c >= COST_FLAG) {
                 flagged.push({
                     numberName: numInfo.name || numInfo.number,
@@ -398,6 +458,7 @@ window._tdCfg = {
             received: inMsgs.length,
             segments: segs,
             cost:     Math.abs(cost),
+            failed:   failed,
             flagged:  flagged
         };
     }
@@ -439,6 +500,10 @@ window._tdCfg = {
                                 <div class="h5 text-primary m-0">${fmtCost(stat.cost)}</div>
                             </div>
                         </div>
+                        ${stat.failed > 0 ? `
+                        <div class="text-center mt-2 pt-2" style="border-top:1px solid #f0f0f0;">
+                            <small class="text-danger"><i class="ti ti-alert-circle"></i> ${stat.failed} failed / undelivered</small>
+                        </div>` : ''}
                     </div>
                 </div>
             </div>
@@ -516,12 +581,24 @@ window._tdCfg = {
             var numberStats = [];
 
             if (cfg.numbers && cfg.numbers.length > 0) {
-                numberStats = await Promise.all(
-                    cfg.numbers.map(function (n) {
-                        return fetchNumberStats(n, range.start, range.end);
-                    })
-                );
+                var prev        = prevDateRange(days);
+                var bothPeriods = await Promise.all([
+                    Promise.all(cfg.numbers.map(function (n) { return fetchNumberStats(n, range.start, range.end); })),
+                    Promise.all(cfg.numbers.map(function (n) { return fetchNumberSummary(n, prev.start, prev.end); }))
+                ]);
+                numberStats = bothPeriods[0];
+                var prevStats   = bothPeriods[1];
+
                 numberStats.sort(function (a, b) { return b.sent - a.sent; });
+
+                var prevTotals = prevStats.reduce(function (acc, s) {
+                    return {
+                        sent:     acc.sent     + s.sent,
+                        received: acc.received + s.received,
+                        segments: acc.segments + s.segments,
+                        cost:     acc.cost     + s.cost
+                    };
+                }, { sent: 0, received: 0, segments: 0, cost: 0 });
             }
 
             var totals = numberStats.reduce(function (acc, s) {
@@ -560,6 +637,13 @@ window._tdCfg = {
             el('td-range-label-2').textContent = rangeText;
             el('td-range-label-3').textContent = rangeText;
             el('td-range-label-4').textContent = rangeText;
+
+            if (typeof prevTotals !== 'undefined') {
+                renderDelta('td-delta-sent',     totals.sent,     prevTotals.sent,     false);
+                renderDelta('td-delta-received', totals.received, prevTotals.received, false);
+                renderDelta('td-delta-segments', totals.segments, prevTotals.segments, true);
+                renderDelta('td-delta-cost',     totals.cost,     prevTotals.cost,     true);
+            }
 
             var numSec = el('td-numbers-section');
             if (numberStats.length > 0) {
