@@ -644,6 +644,9 @@ window._tdCfg = {
             el('td-range-label-4').textContent = rangeText;
 
             if (typeof prevTotals !== 'undefined') {
+                console.log('[TwilioDash] Current period (' + days + 'd):', JSON.parse(JSON.stringify(totals)));
+                console.log('[TwilioDash] Previous period (' + days + 'd):', JSON.parse(JSON.stringify(prevTotals)));
+                console.log('[TwilioDash] Date ranges — current:', range.start, '→', range.end, ' prev:', prevDateRange(days).start, '→', prevDateRange(days).end);
                 renderDelta('td-delta-sent',     totals.sent,     prevTotals.sent,     false);
                 renderDelta('td-delta-received', totals.received, prevTotals.received, false);
                 renderDelta('td-delta-segments', totals.segments, prevTotals.segments, true);
