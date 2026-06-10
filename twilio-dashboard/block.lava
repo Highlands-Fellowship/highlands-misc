@@ -154,7 +154,7 @@ window._tdCfg = {
                     <h4 class="m-0">By Phone Number</h4>
                     <small class="text-muted" id="td-numbers-summary"></small>
                 </div>
-                <div id="td-numbers"></div>
+                <div class="row d-flex flex-wrap" id="td-numbers"></div>
             </div>
 
             /- ── Flagged messages section ────────────────────────── -/
@@ -473,7 +473,8 @@ window._tdCfg = {
         var opacity  = inactive ? '0.5' : '1';
 
         return `
-            <div class="card shadow-sm td-card" style="overflow:hidden; opacity:${opacity};">
+            <div class="col-md-4 col-sm-6 mb-4">
+            <div class="card shadow-sm td-card h-100" style="overflow:hidden; opacity:${opacity};">
                 <div style="height:4px; background:#eee;">
                     <div class="progress-bar td-progress-fill" data-pct="${pct}"
                          style="height:100%; width:0%; transition:none;" role="progressbar"></div>
@@ -505,6 +506,7 @@ window._tdCfg = {
                     </div>` : ''}
                 </div>
             </div>
+            </div>
         `;
     }
 
@@ -515,11 +517,8 @@ window._tdCfg = {
         var maxActivity = Math.max.apply(null, stats.map(function (s) { return s.sent + s.received; })) || 1;
         var container   = el('td-numbers');
 
-        var cards = visible.map(function (s) { return buildNumberCard(s, maxActivity); });
-        var groups = [];
-        for (var i = 0; i < cards.length; i += 3) { groups.push(cards.slice(i, i + 3)); }
-        container.innerHTML = groups.map(function (g) {
-            return '<div class="card-group mb-3">' + g.join('') + '</div>';
+        container.innerHTML = visible.map(function (s) {
+            return buildNumberCard(s, maxActivity);
         }).join('');
 
         animateCards(container);
