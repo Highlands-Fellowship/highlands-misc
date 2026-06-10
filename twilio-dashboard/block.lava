@@ -305,14 +305,19 @@ window._tdCfg = {
     function renderDelta(id, current, previous, isInverse) {
         var elem = el(id);
         if (!elem) return;
-        if (!previous) { elem.innerHTML = ''; return; }
+        if (previous === 0 && current === 0) { elem.innerHTML = ''; return; }
+        if (previous === 0) {
+            var newCls = isInverse ? 'text-danger' : 'text-success';
+            elem.innerHTML = '<span class="' + newCls + '"><i class="ti ti-trending-up"></i> New activity</span>';
+            return;
+        }
         var pct = ((current - previous) / previous) * 100;
         if (Math.abs(pct) < 0.5) { elem.innerHTML = '<span class="text-muted">no change</span>'; return; }
-        var up      = pct > 0;
-        var good    = isInverse ? !up : up;
-        var cls     = good ? 'text-success' : 'text-danger';
-        var icon    = up ? 'ti-trending-up' : 'ti-trending-down';
-        var sign    = up ? '+' : '−';
+        var up   = pct > 0;
+        var good = isInverse ? !up : up;
+        var cls  = good ? 'text-success' : 'text-danger';
+        var icon = up ? 'ti-trending-up' : 'ti-trending-down';
+        var sign = up ? '+' : '−';
         elem.innerHTML = '<span class="' + cls + '"><i class="ti ' + icon + '"></i> ' + sign + Math.abs(pct).toFixed(0) + '% vs prev</span>';
     }
 
