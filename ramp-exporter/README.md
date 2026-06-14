@@ -66,12 +66,14 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 
 1. Fetches closed Ramp card statements from the Ramp API (`statements:read` scope required).
 2. Filters to statements matching the configured entity (`CARD_PAYMENT_ENTITY_ID`) — excludes Subscription statements.
-3. For each statement, fetches all card transactions via the `statement_id` filter.
-4. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
-5. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
-6. Builds a Sage 50 **Payments Journal** CSV — one payment row per invoice, grouped under the vendor.
-7. Emails the CSV via branded HTML email.
-8. Records exported statement IDs in `exported_statement_ids.json`.
+3. Selects only the **single most recent** closed statement.
+4. Fetches all card transactions in that statement via the `statement_id` filter.
+5. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
+6. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
+7. Builds a Sage 50 **Payments Journal** CSV — one payment row per invoice, grouped under the vendor.
+8. Emails the CSV via branded HTML email.
+
+> **No state file.** The script always exports the most recently closed statement. Running it twice produces the same CSV — Sage 50's duplicate check number rejection prevents double-importing.
 
 > **Important:** Import the CSV directly — do not open it in Excel first. Excel reformats the `Invoice Paid` values, breaking the match to existing AP invoices.
 
@@ -96,17 +98,14 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 # Inspect raw statement and transaction data
 python card_payment.py --dump-raw
 
-# Dry run — builds CSV, skips email and state update
+# Dry run — builds CSV, skips email
 python card_payment.py --dry-run
 
-# Full run (emails CSV, updates exported_statement_ids.json)
+# Full run (emails CSV for most recent closed statement)
 python card_payment.py
 
 # Include transactions missing a Vendor ID (one-time recovery use)
 python card_payment.py --dry-run --include-all
-
-# Mark specific statement IDs as exported without re-running
-python card_payment.py --mark-synced-ids STMT_ID1
 ```
 
 Import into Sage 50 via: **File → Select Import/Export → Accounts Payable → Payments Journal → Import**
@@ -322,7 +321,6 @@ Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variable
 | `setup_task.ps1` | Registers the Windows Task Scheduler jobs |
 | `.env.example` | Secrets template — copy to `.env` |
 | `exported_ids.json` | State file for card transaction IDs (auto-created) |
-| `exported_statement_ids.json` | State file for card statement IDs (auto-created) |
 | `exported_reimb_ids.json` | State file for reimbursement IDs (auto-created) |
 | `exported_bill_ids.json` | State file for bill IDs (auto-created) |
 | `output\` | Generated CSVs (auto-created) |

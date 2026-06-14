@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pulls card transactions, reimbursements, and bill payments from the Ramp API, formats them as Sage 50-compatible CSVs, and emails the files via Gmail. Runs daily on Windows via Task Scheduler, replacing a manual Ramp UI export + Excel macro workflow.
 
-Four independent entry points, each with its own state file and email:
+Four independent entry points, each with its own email:
 - `main.py` — card transactions → Sage 50 **Purchases Journal** (`sage_formatter.py`)
 - `card_payment.py` — card statement payments → Sage 50 **Payments Journal** (`card_payment_formatter.py`) — clears the open AP invoices created by `main.py`
 - `reimburse.py` — reimbursements → Sage 50 **General Journal** (`reimbursement_formatter.py`)
@@ -38,7 +38,6 @@ python card_payment.py          # no --mark-synced needed (no Ramp sync for paym
 python main.py --mark-synced-ids ID1 ID2
 python reimburse.py --mark-synced-ids ID1
 python billpay.py --mark-synced-ids ID1
-python card_payment.py --mark-synced-ids STMT_ID1
 ```
 
 ## Required `.env` file
@@ -64,15 +63,15 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 
 ### Card statement payments (`statement_client.py` → `card_payment_formatter.py`)
 
-- Fetches paid statements from `GET /developer/v1/statements` — filters `payment_status == "PAID"`
-- For each statement, fetches its transactions by date range (`from_date` / `to_date` params on `/transactions`)
+- Always exports the **single most recent** closed statement — no state file needed
+- Filters `GET /developer/v1/statements` by `end_date < now` and `CARD_PAYMENT_ENTITY_ID` to exclude Subscription statements
+- Fetches transactions via `statement_id` filter on `/transactions` (not a date range)
 - Regenerates invoice numbers using the **same stable formula** as card transactions: `{vendor[:9]}.{MMDDYY}.{id[-3:]}` — must match exactly
 - Groups transactions by `vendor_id` — one logical payment per vendor per statement
-- All vendor groups share the same `check_number` (statement ID) and `payment_date`
+- Check numbers: `RAMP-MMDDYY-001`, `-002`, etc. per vendor (unique per statement, Sage 50 rejects duplicates)
 - Produces multi-distribution payment rows: `num_distributions` = invoices per vendor, `total_amount` = vendor subtotal, `amount` = individual invoice amount
 - `CARD_PAYMENT_CASH_ACCOUNT` (default `1003-AB`) — bank account debited
 - `CARD_PAYMENT_AP_ACCOUNT` (default `2104-AB`) — AP account cleared (must match what Purchases Journal used)
-- State file: `exported_statement_ids.json`
 - No Ramp sync call needed — statements have no sync_status concept
 
 ### Card transactions (`ramp_client.py` → `sage_formatter.py`)

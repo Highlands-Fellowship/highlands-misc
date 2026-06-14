@@ -297,14 +297,15 @@ def _build_payment_rows(stmt: dict, txns: list[dict], include_all: bool = False)
 def fetch_paid_statements(
     client_id: str,
     client_secret: str,
-    skip_ids: set[str],
     include_all: bool = False,
 ) -> tuple[list[dict], list[str], list[dict]]:
     """
-    Fetch closed statements not yet exported, expand into Payments Journal rows.
+    Fetch the single most recent closed statement and expand into Payments Journal rows.
     Returns (payment_rows, statement_ids, skipped).
-    skipped — transactions missing a Vendor ID, same structure as other pipelines.
-    include_all — if True, use merchant name as vendor ID fallback instead of skipping.
+
+    Always exports only the most recently closed statement — no local state file needed.
+    Sage 50's duplicate check number rejection (RAMP-MMDDYY-NNN) prevents accidental
+    double-imports if the script is run twice before a new statement closes.
     """
     log = logging.getLogger(__name__)
     token = _get_token(client_id, client_secret)
@@ -324,8 +325,6 @@ def fetch_paid_statements(
                 continue
             if not _matches_entity_filter(stmt):
                 continue
-            if stmt["id"] in skip_ids:
-                continue
             statements.append(stmt)
 
         next_url = body.get("page", {}).get("next")
@@ -333,7 +332,12 @@ def fetch_paid_statements(
             break
         params = {}
 
-    statements.sort(key=lambda s: s.get("start_date") or s.get("period_start") or "")
+    # Take only the most recently closed statement
+    statements.sort(
+        key=lambda s: s.get("end_date") or s.get("period_end") or "",
+        reverse=True,
+    )
+    statements = statements[:1]
 
     all_rows: list[dict] = []
     all_skipped: list[dict] = []

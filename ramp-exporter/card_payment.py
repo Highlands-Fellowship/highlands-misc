@@ -1,19 +1,20 @@
 """
 Ramp → Sage 50 card-statement payment export.
 
-Fetches paid Ramp statements, groups their transactions by vendor, and
-produces a Sage 50 Payments Journal CSV that clears the open AP invoices
+Fetches the most recent paid Ramp statement, groups its transactions by vendor,
+and produces a Sage 50 Payments Journal CSV that clears the open AP invoices
 created by the card transaction Purchases Journal import (main.py).
 
+Always exports the single most recent closed statement — no state file needed.
+Sage 50's duplicate check number rejection prevents accidental double-imports.
+
 Usage:
-  python card_payment.py                                  # normal run
-  python card_payment.py --dry-run                        # build CSV, skip email + state
-  python card_payment.py --dump-raw                       # print raw JSON for most recent paid statement
-  python card_payment.py --mark-synced-ids ID1 ID2 ...    # mark specific statement IDs as exported
+  python card_payment.py            # normal run
+  python card_payment.py --dry-run  # build CSV, skip email
+  python card_payment.py --dump-raw # print raw JSON for most recent paid statement
 """
 
 import argparse
-import json
 import logging
 import os
 import sys
@@ -30,7 +31,6 @@ import emailer
 import email_template
 
 BASE_DIR = Path(__file__).parent
-STATE_FILE = BASE_DIR / "exported_statement_ids.json"
 LOG_FILE = BASE_DIR / "logs" / f"run_card_payment_{date.today():%Y%m%d}.log"
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output"))
 
@@ -50,16 +50,6 @@ def _setup_logging(dry_run: bool) -> None:
     )
 
 
-def _load_exported_ids() -> set[str]:
-    if STATE_FILE.exists():
-        return set(json.loads(STATE_FILE.read_text()))
-    return set()
-
-
-def _save_exported_ids(ids: set[str]) -> None:
-    STATE_FILE.write_text(json.dumps(sorted(ids), indent=2))
-
-
 def _require_env(name: str) -> str:
     val = os.getenv(name)
     if not val:
@@ -76,12 +66,6 @@ def main() -> None:
         action="store_true",
         help="include transactions missing a Vendor ID, using merchant name as fallback (one-time recovery use)",
     )
-    parser.add_argument(
-        "--mark-synced-ids",
-        metavar="ID",
-        nargs="+",
-        help="mark specific statement IDs as exported without re-running",
-    )
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -89,18 +73,6 @@ def main() -> None:
 
     client_id = _require_env("RAMP_CLIENT_ID")
     client_secret = _require_env("RAMP_CLIENT_SECRET")
-
-    # Recovery: mark specific statement IDs as done
-    if args.mark_synced_ids:
-        exported = _load_exported_ids()
-        exported.update(args.mark_synced_ids)
-        _save_exported_ids(exported)
-        log.info(
-            "Marked %d statement ID(s) as exported: %s",
-            len(args.mark_synced_ids),
-            args.mark_synced_ids,
-        )
-        return
 
     # --dump-raw: print most recent paid statement and its transactions, then exit
     if args.dump_raw:
@@ -124,13 +96,10 @@ def main() -> None:
     gmail_pass = _require_env("GMAIL_APP_PASSWORD")
     notify_email = [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
 
-    exported_ids = _load_exported_ids()
-
-    log.info("Fetching paid statements from Ramp...")
+    log.info("Fetching most recent paid statement from Ramp...")
     payment_rows, stmt_ids, skipped = statement_client.fetch_paid_statements(
         client_id,
         client_secret,
-        skip_ids=exported_ids,
         include_all=args.include_all,
     )
 
@@ -187,10 +156,6 @@ def main() -> None:
         body_html=html_body,
     )
     log.info("Email sent.")
-
-    new_ids = exported_ids | set(stmt_ids)
-    _save_exported_ids(new_ids)
-    log.info("State file updated. %d total exported statement IDs tracked.", len(new_ids))
 
 
 if __name__ == "__main__":
