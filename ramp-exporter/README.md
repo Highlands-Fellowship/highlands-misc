@@ -26,7 +26,7 @@ This replaces a manual workflow: export CSV from Ramp's UI → run an Excel macr
 | Date / Date Due / Discount Date | `accounting_date` (falls back to `user_transaction_time`) |
 | Description | `CardHolder FirstName LastName - memo` (e.g. `Ledonna Stuart - Lunch meeting`) |
 | G/L Account | `line_items[].accounting_field_selections[type=GL_ACCOUNT].external_code` |
-| Amount | `line_items[].amount.amount / minor_unit_conversion_rate` |
+| Amount | `tx["amount"]` (USD) distributed proportionally across line items by local-currency ratio |
 | Accounting Department | `card_holder.department_name` |
 | Invoice/CM # | Auto-generated as `VendorName.MMDDYY.xxx` (max 20 chars — Sage 50 field limit). Vendor truncated to 9 chars, date as `MMDDYY`, last 3 chars of Ramp transaction ID for uniqueness across export runs |
 | Number of Distributions | Count of line items on the transaction |

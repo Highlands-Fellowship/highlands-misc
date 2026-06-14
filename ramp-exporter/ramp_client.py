@@ -89,14 +89,6 @@ def _gl_account(item: dict) -> str:
     return ""
 
 
-def _line_item_amount(item: dict) -> float:
-    amt = item.get("amount") or {}
-    if isinstance(amt, dict):
-        raw = amt.get("amount", 0)
-        rate = amt.get("minor_unit_conversion_rate", 100)
-        return raw / rate
-    return float(amt)
-
 
 def _clean_text(s: str) -> str:
     """Replace newlines/carriage returns with a space.
@@ -129,6 +121,7 @@ def _expand_transaction(tx: dict, invoice: str) -> list[dict]:
     department = holder.get("department_name") or ""
 
     line_items = tx.get("line_items") or []
+    tx_usd = float(tx.get("amount", 0))
 
     # Transaction with no line items — treat as a single distribution
     if not line_items:
@@ -140,10 +133,26 @@ def _expand_transaction(tx: dict, invoice: str) -> list[dict]:
             "memo": tx_memo,
             "gl_account": "",
             "department": department,
-            "amount": f"{float(tx.get('amount', 0)):.2f}",
+            "amount": f"{tx_usd:.2f}",
             "num_distributions": 1,
             "dist_number": 1,
         }]
+
+    # Compute each line item's local-currency display amount, then distribute the
+    # USD total proportionally. For domestic transactions this equals raw/rate
+    # directly. For international transactions (e.g. HNL), raw/rate is the local
+    # display amount — using it directly would produce HNL amounts in Sage instead
+    # of USD. The proportion is currency-agnostic so it works for both.
+    local_amounts = []
+    for item in line_items:
+        amt = item.get("amount") or {}
+        if isinstance(amt, dict):
+            raw = amt.get("amount", 0)
+            rate = amt.get("minor_unit_conversion_rate", 100)
+            local_amounts.append(raw / rate)
+        else:
+            local_amounts.append(float(amt))
+    total_local = sum(local_amounts)
 
     rows = []
     for i, item in enumerate(line_items):
@@ -152,6 +161,7 @@ def _expand_transaction(tx: dict, invoice: str) -> list[dict]:
             memo = f"{cardholder} - {item_memo}" if cardholder else item_memo
         else:
             memo = tx_memo
+        item_usd = (local_amounts[i] / total_local) * tx_usd if total_local else tx_usd / len(line_items)
         rows.append({
             "id": tx["id"],
             "vendor_id": vendor_id,
@@ -160,7 +170,7 @@ def _expand_transaction(tx: dict, invoice: str) -> list[dict]:
             "memo": memo,
             "gl_account": _gl_account(item),
             "department": department,
-            "amount": f"{_line_item_amount(item):.2f}",
+            "amount": f"{item_usd:.2f}",
             "num_distributions": len(line_items),
             "dist_number": i + 1,
         })
