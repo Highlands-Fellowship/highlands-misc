@@ -141,23 +141,12 @@ def _vendor_name(tx: dict) -> str:
 
 def _tx_amount(tx: dict) -> float:
     """
-    Total transaction amount in dollars.
+    Total transaction amount in USD display units.
 
-    Uses line_items (same logic as ramp_client.py) when present so the amount
-    matches exactly what main.py put on the invoice.  Falls back to the
-    top-level 'amount' field which Ramp stores in display units (not minor units).
+    Uses the top-level 'amount' field (already in USD display units per Ramp API).
+    line_items[].amount can be in the merchant's local currency for international
+    transactions (e.g. HNL for Honduras), so it cannot be used reliably here.
     """
-    line_items = tx.get("line_items") or []
-    if line_items:
-        total = 0.0
-        for item in line_items:
-            amt = item.get("amount") or {}
-            if isinstance(amt, dict):
-                total += amt.get("amount", 0) / amt.get("minor_unit_conversion_rate", 100)
-            else:
-                total += float(amt)
-        return total
-    # Top-level amount is already in display units (confirmed from live API)
     return float(tx.get("amount", 0))
 
 
