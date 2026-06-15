@@ -37,9 +37,10 @@ import emailer
 import email_template
 
 BASE_DIR = Path(__file__).parent
+_STATE_DIR = Path(os.getenv("STATE_DIR", BASE_DIR))
 LOG_FILE = BASE_DIR / "logs" / f"run_card_payment_{date.today():%Y%m%d}.log"
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output"))
-STATE_FILE = BASE_DIR / "exported_statement_ids.json"
+STATE_FILE = _STATE_DIR / "exported_statement_ids.json"
 
 
 def _setup_logging(dry_run: bool) -> None:
@@ -74,6 +75,7 @@ def _load_sent_id() -> str | None:
 
 
 def _save_sent_id(stmt_id: str) -> None:
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(
         json.dumps({"sent_statement_id": stmt_id}, indent=2),
         encoding="utf-8",

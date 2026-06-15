@@ -29,7 +29,8 @@ import emailer
 import email_template
 
 BASE_DIR = Path(__file__).parent
-STATE_FILE = BASE_DIR / "exported_reimb_ids.json"
+_STATE_DIR = Path(os.getenv("STATE_DIR", BASE_DIR))
+STATE_FILE = _STATE_DIR / "exported_reimb_ids.json"
 LOG_FILE = BASE_DIR / "logs" / f"reimb_{date.today():%Y%m%d}.log"
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output"))
 
@@ -56,6 +57,7 @@ def _load_exported_ids() -> set[str]:
 
 
 def _save_exported_ids(ids: set[str]) -> None:
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(sorted(ids), indent=2))
 
 

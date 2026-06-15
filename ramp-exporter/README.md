@@ -255,6 +255,8 @@ NOTIFY_EMAIL=...                       # Who receives the CSVs
 
 Optional overrides (defaults shown):
 ```
+STATE_DIR=C:\ramp-state                # Directory for state files — set to a path outside
+                                       # ramp-exporter so state survives folder updates
 REIMBURSEMENT_CLEARING_ACCOUNT=2200    # ACH clearing account for reimbursements
 REIMBURSEMENT_BANK_ACCOUNT=1003-AB     # Bank account debited on reimbursement payment
 BILLPAY_CASH_ACCOUNT=1000-AB           # Bank account debited on bill payment
@@ -321,10 +323,10 @@ Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variable
 | `setup_accounting_connection.py` | One-time Ramp accounting connection setup (run before --mark-synced) |
 | `setup_task.ps1` | Registers the Windows Task Scheduler jobs |
 | `.env.example` | Secrets template — copy to `.env` |
-| `exported_ids.json` | State file for card transaction IDs (auto-created) |
-| `exported_statement_ids.json` | State file for last sent card payment statement ID (auto-created) |
-| `exported_reimb_ids.json` | State file for reimbursement IDs (auto-created) |
-| `exported_bill_ids.json` | State file for bill IDs (auto-created) |
+| `exported_ids.json` | State file for card transaction IDs (auto-created in `STATE_DIR`) |
+| `exported_statement_ids.json` | State file for last sent card payment statement ID (auto-created in `STATE_DIR`) |
+| `exported_reimb_ids.json` | State file for reimbursement IDs (auto-created in `STATE_DIR`) |
+| `exported_bill_ids.json` | State file for bill IDs (auto-created in `STATE_DIR`) |
 | `output\` | Generated CSVs (auto-created) |
 | `logs\` | Daily log files (auto-created) |
 
