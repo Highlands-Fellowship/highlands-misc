@@ -14,16 +14,16 @@ def send_csv(
     to_address: str | list[str],
     subject: str,
     body_plain: str,
-    csv_data: str,
-    filename: str,
+    csv_data: str | None = None,
+    filename: str | None = None,
     body_html: str | None = None,
     extra_attachments: list[tuple[str, str]] | None = None,
 ) -> None:
-    """Send an email with one or more CSV attachments.
+    """Send an email, optionally with CSV attachments.
 
     to_address may be a single address string or a list of addresses.
-    extra_attachments is an optional list of (csv_data, filename) tuples
-    for additional files beyond the primary csv_data/filename pair.
+    csv_data/filename are optional — omit both to send a notification-only email.
+    extra_attachments is an optional list of (csv_data, filename) tuples.
     """
     recipients = [to_address] if isinstance(to_address, str) else to_address
     outer = MIMEMultipart("mixed")
@@ -39,7 +39,12 @@ def send_csv(
     else:
         outer.attach(MIMEText(body_plain, "plain", "utf-8"))
 
-    for data, name in [(csv_data, filename)] + list(extra_attachments or []):
+    attachments = []
+    if csv_data is not None and filename is not None:
+        attachments.append((csv_data, filename))
+    attachments.extend(extra_attachments or [])
+
+    for data, name in attachments:
         part = MIMEBase("application", "octet-stream")
         part.set_payload(data.encode("utf-8"))
         encoders.encode_base64(part)

@@ -71,12 +71,13 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 2. Filters to statements matching `CARD_PAYMENT_ENTITY_ID` — excludes Subscription statements.
 3. Selects only the **single most recent** closed statement.
 4. Fetches all card transactions in that statement via the `statement_id` filter.
-5. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
-6. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
-7. Builds a Sage 50 **Payments Journal** CSV — one row per invoice, grouped under the vendor.
-8. Emails the CSV via branded HTML email.
+5. **If any transactions are missing a Vendor ID**, sends a warning-only email (no CSV) listing what needs to be fixed in Ramp. The CSV is held until all transactions are resolved.
+6. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
+7. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
+8. Builds a Sage 50 **Payments Journal** CSV — one row per invoice, grouped under the vendor.
+9. Emails the CSV and records the statement ID in `exported_statement_ids.json` so subsequent daily runs skip it.
 
-> **No state file.** The script always exports the most recently closed statement. Running it twice before a new statement closes produces the same CSV — Sage 50's duplicate check number rejection prevents double-importing.
+> **Fix and retry.** Set the **Accounting Vendor** field in Ramp for any flagged transactions. The task runs daily — the CSV will be sent automatically on the next run once all transactions are resolved.
 
 > **Important:** Import the CSV directly — do not open it in Excel first. Excel reformats the `Invoice Paid` values, breaking the match to existing AP invoices.
 

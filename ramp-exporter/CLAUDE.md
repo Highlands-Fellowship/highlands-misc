@@ -63,12 +63,15 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 
 ### Card statement payments (`statement_client.py` → `card_payment_formatter.py`)
 
-- Always exports the **single most recent** closed statement — no state file needed
+- Always exports the **single most recent** closed statement
 - Filters `GET /developer/v1/statements` by `end_date < now` and `CARD_PAYMENT_ENTITY_ID` to exclude Subscription statements
 - Fetches transactions via `statement_id` filter on `/transactions` (not a date range)
+- **Hold-until-complete:** if any transactions are missing Vendor ID, sends a warning-only email (no CSV) and exits; CSV is sent only when all transactions are resolved
 - Regenerates invoice numbers using the **same stable formula** as card transactions: `{vendor[:9]}.{MMDDYY}.{id[-3:]}` — must match exactly
 - Groups transactions by `vendor_id` — one logical payment per vendor per statement
 - Check numbers: `RAMP-MMDDYY-001`, `-002`, etc. per vendor (unique per statement, Sage 50 rejects duplicates)
+- After sending CSV, records statement ID in `exported_statement_ids.json` — subsequent daily runs skip it
+- `--include-all` bypasses both the Vendor ID check and the already-sent check (recovery use)
 - Produces multi-distribution payment rows: `num_distributions` = invoices per vendor, `total_amount` = vendor subtotal, `amount` = individual invoice amount
 - `CARD_PAYMENT_CASH_ACCOUNT` (default `1003-AB`) — bank account debited
 - `CARD_PAYMENT_AP_ACCOUNT` (default `2104-AB`) — AP account cleared (must match what Purchases Journal used)

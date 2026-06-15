@@ -1,20 +1,26 @@
 """
 Ramp → Sage 50 card-statement payment export.
 
-Fetches the most recent paid Ramp statement, groups its transactions by vendor,
-and produces a Sage 50 Payments Journal CSV that clears the open AP invoices
-created by the card transaction Purchases Journal import (main.py).
+Fetches the most recent paid Ramp statement and produces a Sage 50 Payments
+Journal CSV that clears the open AP invoices created by the card transaction
+Purchases Journal import (main.py).
 
-Always exports the single most recent closed statement — no state file needed.
-Sage 50's duplicate check number rejection prevents accidental double-imports.
+Behavior:
+  - If any transactions are missing a Vendor ID, sends a warning-only email
+    (no CSV) and exits.  The task runs daily — once the missing fields are
+    fixed in Ramp, the next run will send the CSV automatically.
+  - Once the CSV is sent, records the statement ID in exported_statement_ids.json
+    so subsequent daily runs skip it without re-sending.
+  - --include-all bypasses both checks (recovery use only).
 
 Usage:
   python card_payment.py            # normal run
-  python card_payment.py --dry-run  # build CSV, skip email
+  python card_payment.py --dry-run  # build CSV / log what would happen, skip email
   python card_payment.py --dump-raw # print raw JSON for most recent paid statement
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -33,6 +39,7 @@ import email_template
 BASE_DIR = Path(__file__).parent
 LOG_FILE = BASE_DIR / "logs" / f"run_card_payment_{date.today():%Y%m%d}.log"
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output"))
+STATE_FILE = BASE_DIR / "exported_statement_ids.json"
 
 
 def _setup_logging(dry_run: bool) -> None:
@@ -57,6 +64,22 @@ def _require_env(name: str) -> str:
     return val
 
 
+def _load_sent_id() -> str | None:
+    if not STATE_FILE.exists():
+        return None
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8")).get("sent_statement_id")
+    except Exception:
+        return None
+
+
+def _save_sent_id(stmt_id: str) -> None:
+    STATE_FILE.write_text(
+        json.dumps({"sent_statement_id": stmt_id}, indent=2),
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
@@ -64,7 +87,8 @@ def main() -> None:
     parser.add_argument(
         "--include-all",
         action="store_true",
-        help="include transactions missing a Vendor ID, using merchant name as fallback (one-time recovery use)",
+        help="include transactions missing a Vendor ID using merchant name as fallback; "
+             "also bypasses the already-sent check (one-time recovery use)",
     )
     args = parser.parse_args()
 
@@ -74,7 +98,6 @@ def main() -> None:
     client_id = _require_env("RAMP_CLIENT_ID")
     client_secret = _require_env("RAMP_CLIENT_SECRET")
 
-    # --dump-raw: print most recent paid statement and its transactions, then exit
     if args.dump_raw:
         import pprint
         stmt, txns = statement_client.dump_raw_statement(client_id, client_secret)
@@ -103,15 +126,52 @@ def main() -> None:
         include_all=args.include_all,
     )
 
-    if skipped:
-        log.warning(
-            "%d transaction(s) skipped due to missing Vendor ID (see above).", len(skipped)
-        )
-
     if not stmt_ids:
-        log.info("Nothing to do — no new paid statements.")
+        log.info("Nothing to do — no closed statements found.")
         return
 
+    stmt_id = stmt_ids[0]
+    today = date.today()
+
+    # ── Hold until all transactions have a Vendor ID ──────────────────────────
+    if skipped and not args.include_all:
+        log.warning(
+            "%d transaction(s) missing Vendor ID — holding export until resolved.",
+            len(skipped),
+        )
+        if args.dry_run:
+            log.info("[dry-run] Would send action-required email (no CSV).")
+            return
+
+        subject = (
+            f"Ramp Card Payments — Action Required: "
+            f"{len(skipped)} transaction(s) need Vendor ID ({today:%B %d, %Y})"
+        )
+        html_body, plain_body = email_template.build_card_payment_pending_email(
+            count_skipped=len(skipped),
+            gen_date=f"{today:%Y-%m-%d}",
+            skipped=skipped,
+        )
+        log.info("Sending action-required email to %s...", notify_email)
+        emailer.send_csv(
+            gmail_user=gmail_user,
+            gmail_app_password=gmail_pass,
+            to_address=notify_email,
+            subject=subject,
+            body_plain=plain_body,
+            body_html=html_body,
+        )
+        log.info("Email sent.")
+        return
+
+    # ── Skip if this statement was already exported ───────────────────────────
+    if not args.include_all:
+        sent_id = _load_sent_id()
+        if sent_id == stmt_id:
+            log.info("Statement %s already exported — nothing to do.", stmt_id)
+            return
+
+    # ── Build and send CSV ────────────────────────────────────────────────────
     unique_vendors = len({r["vendor_id"] for r in payment_rows})
     unique_invoices = len({r["invoice_number"] for r in payment_rows})
     log.info(
@@ -122,7 +182,6 @@ def main() -> None:
     )
 
     csv_data = card_payment_formatter.build_csv(payment_rows)
-    today = date.today()
     csv_filename = f"sage_card_payments_{today:%Y%m%d}.csv"
     csv_path = OUTPUT_DIR / csv_filename
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -137,7 +196,6 @@ def main() -> None:
         f"Ramp Card Payments Ready for Sage 50 — "
         f"{unique_invoices} invoice(s) / {len(stmt_ids)} statement(s) ({today:%B %d, %Y})"
     )
-
     html_body, plain_body = email_template.build_card_payment_email(
         count=unique_invoices,
         gen_date=f"{today:%Y-%m-%d}",
@@ -156,6 +214,9 @@ def main() -> None:
         body_html=html_body,
     )
     log.info("Email sent.")
+
+    _save_sent_id(stmt_id)
+    log.info("Recorded statement %s as exported.", stmt_id)
 
 
 if __name__ == "__main__":

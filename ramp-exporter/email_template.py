@@ -117,6 +117,25 @@ _SKIPPED_BOX = """
   </tr>
 </table>"""
 
+_SKIPPED_BOX_PENDING = """
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:20px;">
+  <tr>
+    <td style="background:#fff8e6; border-left:4px solid {yellow}; border-radius:4px;
+               padding:14px 18px;">
+      <p style="margin:0 0 8px; font-size:12px; font-weight:700; color:{navy};
+                text-transform:uppercase; letter-spacing:0.5px;">
+        &#9888;&nbsp; {count} Transaction(s) Need Attention &mdash; Export On Hold
+      </p>
+      <p style="margin:0 0 10px; font-size:13px; color:{near_black};">
+        The Payments Journal CSV will <strong>not be sent</strong> until all transactions
+        have a Vendor ID. Set the <strong>Accounting Vendor</strong> field in Ramp for
+        each item below &mdash; the next daily run will check again and send the CSV when ready.
+      </p>
+      {rows}
+    </td>
+  </tr>
+</table>"""
+
 _SKIPPED_ROW = (
     '<p style="margin:4px 0; font-size:13px; color:{near_black};">'
     '<strong>{date}&nbsp;&nbsp;{merchant}</strong>'
@@ -185,6 +204,25 @@ def build_card_payment_email(
     )
 
 
+def build_card_payment_pending_email(
+    count_skipped: int,
+    gen_date: str,
+    skipped: list[dict],
+) -> tuple[str, str]:
+    """Return (html, plain_text) when card payment export is blocked by missing Vendor IDs."""
+    return _build(
+        heading="Card Payments &mdash; Action Required",
+        intro=(
+            f"{count_skipped} transaction(s) in the current statement are missing a Vendor ID. "
+            "The Payments Journal export is on hold until all transactions are resolved."
+        ),
+        import_path=None,
+        gen_date=gen_date,
+        skipped=skipped,
+        pending=True,
+    )
+
+
 def build_reimbursement_email(
     count: int,
     gen_date: str,
@@ -207,9 +245,10 @@ def build_reimbursement_email(
 def _build(
     heading: str,
     intro: str,
-    import_path: str,
     gen_date: str,
     skipped: list[dict],
+    import_path: str | None = None,
+    pending: bool = False,
 ) -> tuple[str, str]:
     fmt = dict(
         navy=NAVY, teal=TEAL, yellow=YELLOW, cream=CREAM,
@@ -217,7 +256,7 @@ def _build(
         logo_url=LOGO_URL, wordmark_url=WORDMARK_URL,
     )
 
-    import_box = _IMPORT_BOX.format(import_path=import_path, **fmt)
+    import_box = _IMPORT_BOX.format(import_path=import_path, **fmt) if import_path else ""
 
     if skipped:
         rows_html = "".join(
@@ -230,7 +269,8 @@ def _build(
             )
             for s in skipped
         )
-        skipped_box = _SKIPPED_BOX.format(count=len(skipped), rows=rows_html, **fmt)
+        box_template = _SKIPPED_BOX_PENDING if pending else _SKIPPED_BOX
+        skipped_box = box_template.format(count=len(skipped), rows=rows_html, **fmt)
     else:
         skipped_box = ""
 
@@ -243,10 +283,12 @@ def _build(
         **fmt,
     )
 
-    # Plain-text fallback
-    plain = f"{intro}\n\nImport path: {import_path.replace('&rsaquo;', '>').replace('&nbsp;', ' ')}\n"
+    plain = f"{intro}\n"
+    if import_path:
+        plain += f"\nImport path: {import_path.replace('&rsaquo;', '>').replace('&nbsp;', ' ')}\n"
     if skipped:
-        plain += f"\nWARNING: {len(skipped)} transaction(s) skipped:\n"
+        label = "ACTION REQUIRED" if pending else "WARNING"
+        plain += f"\n{label}: {len(skipped)} transaction(s) missing Vendor ID:\n"
         for s in skipped:
             plain += f"  {s['date']}  {s['merchant']}\n"
             if s.get("ramp_url"):

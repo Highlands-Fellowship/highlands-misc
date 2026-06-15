@@ -68,12 +68,13 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 2. Filters to statements matching the configured entity (`CARD_PAYMENT_ENTITY_ID`) — excludes Subscription statements.
 3. Selects only the **single most recent** closed statement.
 4. Fetches all card transactions in that statement via the `statement_id` filter.
-5. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
-6. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
-7. Builds a Sage 50 **Payments Journal** CSV — one payment row per invoice, grouped under the vendor.
-8. Emails the CSV via branded HTML email.
+5. **If any transactions are missing a Vendor ID**, sends a warning-only email (no CSV) listing what needs to be fixed in Ramp. The CSV is held until all transactions are resolved.
+6. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
+7. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
+8. Builds a Sage 50 **Payments Journal** CSV — one payment row per invoice, grouped under the vendor.
+9. Emails the CSV and records the statement ID in `exported_statement_ids.json` so subsequent daily runs skip it.
 
-> **No state file.** The script always exports the most recently closed statement. Running it twice produces the same CSV — Sage 50's duplicate check number rejection prevents double-importing.
+> **Fix and retry.** Set the **Accounting Vendor** field in Ramp for any flagged transactions. The task runs daily — the CSV will be sent automatically on the next run once all transactions are resolved.
 
 > **Important:** Import the CSV directly — do not open it in Excel first. Excel reformats the `Invoice Paid` values, breaking the match to existing AP invoices.
 
@@ -98,14 +99,14 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 # Inspect raw statement and transaction data
 python card_payment.py --dump-raw
 
-# Dry run — builds CSV, skips email
+# Dry run — builds CSV (or shows pending status), skips email
 python card_payment.py --dry-run
 
-# Full run (emails CSV for most recent closed statement)
+# Full run (sends warning email if Vendor IDs missing; sends CSV once all are set)
 python card_payment.py
 
-# Include transactions missing a Vendor ID (one-time recovery use)
-python card_payment.py --dry-run --include-all
+# Force-include transactions missing a Vendor ID and bypass the already-sent check (recovery only)
+python card_payment.py --include-all
 ```
 
 Import into Sage 50 via: **File → Select Import/Export → Accounts Payable → Payments Journal → Import**
@@ -321,6 +322,7 @@ Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variable
 | `setup_task.ps1` | Registers the Windows Task Scheduler jobs |
 | `.env.example` | Secrets template — copy to `.env` |
 | `exported_ids.json` | State file for card transaction IDs (auto-created) |
+| `exported_statement_ids.json` | State file for last sent card payment statement ID (auto-created) |
 | `exported_reimb_ids.json` | State file for reimbursement IDs (auto-created) |
 | `exported_bill_ids.json` | State file for bill IDs (auto-created) |
 | `output\` | Generated CSVs (auto-created) |
