@@ -136,6 +136,27 @@ _SKIPPED_BOX_PENDING = """
   </tr>
 </table>"""
 
+_SKIPPED_BOX_NOT_EXPORTED = """
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:20px;">
+  <tr>
+    <td style="background:#fff8e6; border-left:4px solid {yellow}; border-radius:4px;
+               padding:14px 18px;">
+      <p style="margin:0 0 8px; font-size:12px; font-weight:700; color:{navy};
+                text-transform:uppercase; letter-spacing:0.5px;">
+        &#9888;&nbsp; {count} Transaction(s) Not Yet in Purchases Journal &mdash; Payment CSV On Hold
+      </p>
+      <p style="margin:0 0 10px; font-size:13px; color:{near_black};">
+        The Payments Journal CSV will <strong>not be sent</strong> until all transactions in this
+        statement have been exported via the card transaction (Purchases Journal) export. The
+        transactions below have not been exported yet &mdash; they may still need to be coded in
+        Ramp, or the card transaction task may not have run yet. The next daily run will check
+        again automatically.
+      </p>
+      {rows}
+    </td>
+  </tr>
+</table>"""
+
 _SKIPPED_ROW = (
     '<p style="margin:4px 0; font-size:13px; color:{near_black};">'
     '<strong>{date}&nbsp;&nbsp;{merchant}</strong>'
@@ -192,7 +213,11 @@ def build_card_payment_email(
 ) -> tuple[str, str]:
     """Return (html, plain_text) for a card statement payment export notification."""
     import_path = (
-        "File &rsaquo; Select Import/Export &rsaquo; "
+        "<strong>Import order matters &mdash; do not skip step 1:</strong><br>"
+        "1. Import card transactions Purchases Journal first &mdash; "
+        "if not already imported from today&rsquo;s export<br>"
+        "2. Then import this file:<br>"
+        "&nbsp;&nbsp;File &rsaquo; Select Import/Export &rsaquo; "
         "Accounts Payable &rsaquo; Payments Journal &rsaquo; Import"
     )
     return _build(
@@ -201,6 +226,26 @@ def build_card_payment_email(
         import_path=import_path,
         gen_date=gen_date,
         skipped=skipped,
+    )
+
+
+def build_card_payment_not_exported_email(
+    count: int,
+    gen_date: str,
+    items: list[dict],
+) -> tuple[str, str]:
+    """Return (html, plain_text) when payment export is blocked by unexported card transactions."""
+    return _build(
+        heading="Card Payments &mdash; Export On Hold",
+        intro=(
+            f"{count} transaction(s) in the current statement have not yet been exported "
+            "via the card transaction (Purchases Journal) export. "
+            "The Payments Journal CSV will be sent automatically once all transactions are exported."
+        ),
+        import_path=None,
+        gen_date=gen_date,
+        skipped=items,
+        not_exported=True,
     )
 
 
@@ -249,6 +294,7 @@ def _build(
     skipped: list[dict],
     import_path: str | None = None,
     pending: bool = False,
+    not_exported: bool = False,
 ) -> tuple[str, str]:
     fmt = dict(
         navy=NAVY, teal=TEAL, yellow=YELLOW, cream=CREAM,
@@ -269,7 +315,12 @@ def _build(
             )
             for s in skipped
         )
-        box_template = _SKIPPED_BOX_PENDING if pending else _SKIPPED_BOX
+        if not_exported:
+            box_template = _SKIPPED_BOX_NOT_EXPORTED
+        elif pending:
+            box_template = _SKIPPED_BOX_PENDING
+        else:
+            box_template = _SKIPPED_BOX
         skipped_box = box_template.format(count=len(skipped), rows=rows_html, **fmt)
     else:
         skipped_box = ""
@@ -285,10 +336,26 @@ def _build(
 
     plain = f"{intro}\n"
     if import_path:
-        plain += f"\nImport path: {import_path.replace('&rsaquo;', '>').replace('&nbsp;', ' ')}\n"
+        import_path_plain = (
+            import_path
+            .replace("&rsaquo;", ">")
+            .replace("&nbsp;", " ")
+            .replace("<br>", "\n")
+            .replace("<strong>", "")
+            .replace("</strong>", "")
+            .replace("&mdash;", "-")
+            .replace("&rsquo;", "'")
+            .replace("&nbsp;", " ")
+        )
+        plain += f"\n{import_path_plain}\n"
     if skipped:
-        label = "ACTION REQUIRED" if pending else "WARNING"
-        plain += f"\n{label}: {len(skipped)} transaction(s) missing Vendor ID:\n"
+        if not_exported:
+            label = "ACTION REQUIRED (NOT YET EXPORTED)"
+        elif pending:
+            label = "ACTION REQUIRED"
+        else:
+            label = "WARNING"
+        plain += f"\n{label}: {len(skipped)} transaction(s):\n"
         for s in skipped:
             plain += f"  {s['date']}  {s['merchant']}\n"
             if s.get("ramp_url"):

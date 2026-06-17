@@ -7,11 +7,15 @@ Purchases Journal import (main.py).
 
 Behavior:
   - If any transactions are missing a Vendor ID, sends a warning-only email
-    (no CSV) and exits.  The task runs daily — once the missing fields are
-    fixed in Ramp, the next run will send the CSV automatically.
-  - Once the CSV is sent, records the statement ID in exported_statement_ids.json
-    so subsequent daily runs skip it without re-sending.
-  - --include-all bypasses both checks (recovery use only).
+    (no CSV) and exits.  Fix the Accounting Vendor field in Ramp and the next
+    run will check again.
+  - If any statement transactions have not yet been exported via the card
+    transaction export (main.py), sends a warning-only email and exits.
+    This ensures card transactions are in Sage 50 as AP invoices before the
+    payment CSV is imported to clear them.
+  - Once all checks pass, sends the CSV and records the statement ID in
+    exported_statement_ids.json so subsequent daily runs skip it.
+  - --include-all bypasses all three checks (recovery use only).
 
 Usage:
   python card_payment.py            # normal run
@@ -41,6 +45,7 @@ _STATE_DIR = Path(os.getenv("STATE_DIR", BASE_DIR))
 LOG_FILE = BASE_DIR / "logs" / f"run_card_payment_{date.today():%Y%m%d}.log"
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output"))
 STATE_FILE = _STATE_DIR / "exported_statement_ids.json"
+_PURCHASES_STATE_FILE = _STATE_DIR / "exported_ids.json"
 
 
 def _setup_logging(dry_run: bool) -> None:
@@ -63,6 +68,17 @@ def _require_env(name: str) -> str:
     if not val:
         sys.exit(f"ERROR: {name} is not set in .env")
     return val
+
+
+def _load_exported_purchase_ids() -> set[str]:
+    if not _PURCHASES_STATE_FILE.exists():
+        return set()
+    try:
+        return set(json.loads(_PURCHASES_STATE_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        log = logging.getLogger(__name__)
+        log.warning("Could not read %s — treating all transactions as unexported.", _PURCHASES_STATE_FILE)
+        return set()
 
 
 def _load_sent_id() -> str | None:
@@ -90,7 +106,8 @@ def main() -> None:
         "--include-all",
         action="store_true",
         help="include transactions missing a Vendor ID using merchant name as fallback; "
-             "also bypasses the already-sent check (one-time recovery use)",
+             "also bypasses the not-yet-exported check and the already-sent check "
+             "(one-time recovery use)",
     )
     args = parser.parse_args()
 
@@ -165,6 +182,57 @@ def main() -> None:
         )
         log.info("Email sent.")
         return
+
+    # ── Hold until all statement transactions appear in the Purchases Journal export ──
+    if not args.include_all:
+        exported_purchase_ids = _load_exported_purchase_ids()
+        stmt_tx_ids = {r["tx_id"] for r in payment_rows}
+        not_yet_exported = stmt_tx_ids - exported_purchase_ids
+        if not_yet_exported:
+            not_exported_items = [
+                {
+                    "merchant": r["vendor_name"] or r["vendor_id"],
+                    "date": r["payment_date"],
+                    "amount": r["amount"],
+                    "id": r["tx_id"],
+                    "reasons": [
+                        "not yet in Purchases Journal export — "
+                        "card transactions must be exported and imported into Sage 50 first"
+                    ],
+                    "ramp_url": f"https://app.ramp.com/details/list/transactions/{r['tx_id']}",
+                }
+                for r in payment_rows
+                if r["tx_id"] not in exported_purchase_ids
+            ]
+            log.warning(
+                "%d transaction(s) in statement not yet in card transaction export — holding payment CSV.",
+                len(not_exported_items),
+            )
+            if args.dry_run:
+                log.info("[dry-run] Would send not-exported warning email (no CSV).")
+                return
+
+            subject = (
+                f"Ramp Card Payments — Export On Hold: "
+                f"{len(not_exported_items)} transaction(s) not yet in Purchases Journal "
+                f"({today:%B %d, %Y})"
+            )
+            html_body, plain_body = email_template.build_card_payment_not_exported_email(
+                count=len(not_exported_items),
+                gen_date=f"{today:%Y-%m-%d}",
+                items=not_exported_items,
+            )
+            log.info("Sending not-exported warning email to %s...", notify_email)
+            emailer.send_csv(
+                gmail_user=gmail_user,
+                gmail_app_password=gmail_pass,
+                to_address=notify_email,
+                subject=subject,
+                body_plain=plain_body,
+                body_html=html_body,
+            )
+            log.info("Email sent.")
+            return
 
     # ── Skip if this statement was already exported ───────────────────────────
     if not args.include_all:

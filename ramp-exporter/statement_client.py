@@ -259,6 +259,7 @@ def _build_payment_rows(stmt: dict, txns: list[dict], include_all: bool = False)
                 "invoice_number": _invoice_number(t),
                 "amount": _tx_amount(t),
                 "vendor_name": _vendor_name(t),
+                "tx_id": t["id"],
             }
             for t in vendor_txns
         ]
@@ -278,6 +279,7 @@ def _build_payment_rows(stmt: dict, txns: list[dict], include_all: bool = False)
                 "amount": inv["amount"],
                 "num_distributions": num_dist,
                 "payment_method": "Check",
+                "tx_id": inv["tx_id"],
             })
 
     return rows, skipped
