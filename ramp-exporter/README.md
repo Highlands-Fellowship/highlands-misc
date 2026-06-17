@@ -301,7 +301,7 @@ Run once from an elevated PowerShell prompt to register the daily Task Scheduler
 .\setup_task.ps1
 ```
 
-Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variables before running. Card transactions, reimbursements, and bill payments each run with `--mark-synced`. Card payments run at `$CARD_PMT_HOUR` (default 7 AM, one hour after the others) and require no `--mark-synced` flag — statements have no sync status in Ramp.
+Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variables before running. Card transactions, reimbursements, and bill payments each run with `--mark-synced` at `$CARD_HOUR`/`$REIMB_HOUR`/`$BILL_HOUR` (default 9 AM). Card payments run at `$CARD_PMT_HOUR` (default 10 AM, one hour later) and require no `--mark-synced` flag — statements have no sync status in Ramp. The 9 AM timing lets staff import the Purchases Journal email before the 10 AM Payments Journal arrives, completing both imports the same day.
 
 ---
 

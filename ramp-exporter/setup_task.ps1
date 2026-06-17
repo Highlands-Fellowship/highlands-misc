@@ -18,10 +18,10 @@ param(
 # ── Configuration ────────────────────────────────────────────────────────────
 $SCRIPT_DIR      = "C:\ramp-exporter"
 $PYTHON_EXE      = "python"          # or full path e.g. C:\Python312\python.exe
-$CARD_HOUR       = 6                 # card transactions: 6 AM daily
-$REIMB_HOUR      = 6                 # reimbursements:    6 AM daily (can differ)
-$BILL_HOUR       = 6                 # bill payments:     6 AM daily (can differ)
-$CARD_PMT_HOUR   = 8                 # card payments:     8 AM daily (2hr after card export;
+$CARD_HOUR       = 9                 # card transactions: 9 AM daily
+$REIMB_HOUR      = 9                 # reimbursements:    9 AM daily (can differ)
+$BILL_HOUR       = 9                 # bill payments:     9 AM daily (can differ)
+$CARD_PMT_HOUR   = 10                # card payments:     10 AM daily (1hr after card export;
                                      # script also holds CSV if card transactions haven't been
                                      # exported to exported_ids.json yet — so timing is secondary)
 # ─────────────────────────────────────────────────────────────────────────────
