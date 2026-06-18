@@ -8,7 +8,7 @@ Accounting exports from Ramp are handled automatically. Once a week on Wednesday
 
 ## What You'll Receive
 
-You will receive up to **four separate emails**, each with a CSV file attached:
+You will receive up to **four separate emails**, each with one or more CSV files attached:
 
 ### 1. Card Transactions
 - **Subject:** Card Transactions Ready for Import
@@ -18,6 +18,8 @@ You will receive up to **four separate emails**, each with a CSV file attached:
 - **Subject:** Card Payments Ready for Import
 - **Import path:** File › Select Import/Export › Accounts Payable › Payments Journal › Import
 - Clears the open balance on card transaction invoices imported in step 1.
+
+> **Sometimes steps 1 and 2 arrive in a single combined email** with subject "Card Transactions & Payments Ready for Import" and two files attached. When that happens, import them in order — card transactions first, then card payments. The email will include numbered instructions.
 
 ### 3. Reimbursements
 - **Subject:** Reimbursements Ready for Import

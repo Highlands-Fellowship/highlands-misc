@@ -71,15 +71,19 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 2. Filters to statements matching `CARD_PAYMENT_ENTITY_ID` — excludes Subscription statements.
 3. Selects only the **single most recent** closed statement.
 4. Fetches all card transactions in that statement via the `statement_id` filter.
-5. **If any transactions are missing a Vendor ID**, sends a warning-only email (no CSV) listing what needs to be fixed in Ramp. The CSV is held until all transactions are resolved.
+5. Checks `sync_status` on each transaction and takes one of the following actions:
+   - **Any transaction missing a Vendor ID** → sends a warning-only email (no CSV). Set the **Accounting Vendor** field in Ramp; the next daily run will retry.
+   - **Any transaction `NOT_SYNCED`** (not yet coded or approved in Ramp) → sends a warning-only email and holds. Complete expense coding in Ramp; the next daily run will retry.
+   - **All transactions `SYNC_READY` or `SYNCED`, with some `SYNC_READY`** → auto-exports those transactions as a Purchases Journal CSV alongside the Payments Journal CSV, marks them synced in Ramp, and emails **both files** with numbered import instructions. Triggered when `card_payment.py` runs daily but `main.py` runs weekly.
+   - **All transactions `SYNCED`** → sends the Payments Journal CSV only.
 6. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
 7. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
 8. Builds a Sage 50 **Payments Journal** CSV — one row per invoice, grouped under the vendor.
-9. Emails the CSV and records the statement ID in `exported_statement_ids.json` so subsequent daily runs skip it.
+9. Emails the CSV(s) and records the statement ID in `exported_statement_ids.json` so subsequent daily runs skip it.
 
-> **Fix and retry.** Set the **Accounting Vendor** field in Ramp for any flagged transactions. The task runs daily — the CSV will be sent automatically on the next run once all transactions are resolved.
+> **When both files are emailed:** Import the Purchases Journal first, then the Payments Journal. The email includes numbered instructions.
 
-> **Important:** Import the CSV directly — do not open it in Excel first. Excel reformats the `Invoice Paid` values, breaking the match to existing AP invoices.
+> **Important:** Import CSVs directly — do not open them in Excel first. Excel reformats the `Invoice Paid` values, breaking the match to existing AP invoices.
 
 ### Field mapping
 
@@ -108,7 +112,7 @@ python card_payment.py --dry-run
 # Full run (emails CSV for most recent closed statement)
 python card_payment.py
 
-# Include transactions missing a Vendor ID (one-time recovery use)
+# Bypass all hold checks and already-sent check (one-time recovery use)
 python card_payment.py --dry-run --include-all
 ```
 
@@ -313,7 +317,7 @@ Run once from an elevated PowerShell prompt to register Task Scheduler jobs:
 
 Valid task names: `Card`, `CardPayment`, `Reimb`, `Bill`
 
-Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variables before running. Card transactions, reimbursements, and bill payments run with `--mark-synced`. Card payments (`$CARD_PMT_HOUR`, default 7 AM) require no `--mark-synced` flag — statements have no sync status in Ramp.
+Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variables before running. Card transactions, reimbursements, and bill payments run with `--mark-synced`. Card payments (`$CARD_PMT_HOUR`, default 10 AM) require no `--mark-synced` flag — statements have no sync status in Ramp.
 
 ---
 
@@ -339,6 +343,7 @@ Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variable
 | `setup_task.ps1` | Registers the Windows Task Scheduler jobs |
 | `.env.example` | Secrets template — copy to `.env` |
 | `exported_ids.json` | State file for card transaction IDs (auto-created) |
+| `exported_statement_ids.json` | State file for card statement IDs (auto-created) |
 | `exported_reimb_ids.json` | State file for reimbursement IDs (auto-created) |
 | `exported_bill_ids.json` | State file for bill IDs (auto-created) |
 | `output\` | Generated CSVs (auto-created) |
