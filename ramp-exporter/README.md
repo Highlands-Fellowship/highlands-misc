@@ -68,18 +68,18 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 2. Filters to statements matching the configured entity (`CARD_PAYMENT_ENTITY_ID`) — excludes Subscription statements.
 3. Selects only the **single most recent** closed statement.
 4. Fetches all card transactions in that statement via the `statement_id` filter.
-5. **If any transactions are missing a Vendor ID**, sends a warning-only email (no CSV) listing what needs to be fixed in Ramp. The CSV is held until all transactions are resolved.
-6. **If any transactions have not yet been exported via the card transaction export (`main.py`)**, sends a warning-only email and holds the CSV. This ensures the corresponding AP invoices exist in Sage 50 before the payment CSV is imported to clear them.
-7. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
-8. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
-9. Builds a Sage 50 **Payments Journal** CSV — one payment row per invoice, grouped under the vendor.
-10. Emails the CSV and records the statement ID in `exported_statement_ids.json` so subsequent daily runs skip it.
+5. **If any transactions are missing a Vendor ID** → sends a warning-only email (no CSV). Set the **Accounting Vendor** field in Ramp and the next daily run will retry.
+6. **If any transactions are `NOT_SYNCED`** (not yet coded or approved in Ramp) → sends a warning-only email and holds. Complete the expense coding in Ramp and the next run will retry.
+7. **If all transactions are `SYNC_READY` or `SYNCED` and some are `SYNC_READY`** → auto-exports those transactions as a Purchases Journal CSV alongside the Payments Journal CSV, marks them synced in Ramp, and emails **both files** with numbered import instructions. This handles the case where `main.py` runs weekly but `card_payment.py` runs daily.
+8. **If all transactions are already `SYNCED`** → sends the Payments Journal CSV only.
+9. Regenerates invoice numbers using the **same formula** as the card transaction export (`{vendor[:9]}.{MMDDYY}.{id[-3:]}`) so Sage 50 can match payments to existing AP invoices.
+10. Groups transactions by vendor. Each vendor gets a unique check number (`RAMP-MMDDYY-001`, `-002`, etc.).
+11. Builds a Sage 50 **Payments Journal** CSV — one payment row per invoice, grouped under the vendor.
+12. Emails the CSV and records the statement ID in `exported_statement_ids.json` so subsequent daily runs skip it.
 
-> **Fix and retry (missing Vendor ID).** Set the **Accounting Vendor** field in Ramp for any flagged transactions. The task runs daily — the CSV will be sent automatically on the next run once all transactions are resolved.
+> **When both files are emailed (step 7):** Import in order — Purchases Journal first, then Payments Journal. The email includes numbered instructions.
 
-> **Fix and retry (not yet exported).** If the warning says transactions are not yet in the Purchases Journal export, wait for the card transaction task to run (or trigger it manually), then the payment CSV will be sent on the next run. Use `python card_payment.py --include-all` to bypass all checks as a recovery option if the transactions are confirmed to already be in Sage 50.
-
-> **Important:** Import the CSV directly — do not open it in Excel first. Excel reformats the `Invoice Paid` values, breaking the match to existing AP invoices.
+> **Important:** Import CSVs directly — do not open them in Excel first. Excel reformats the `Invoice Paid` values, breaking the match to existing AP invoices.
 
 ### Field mapping
 
@@ -102,17 +102,19 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 # Inspect raw statement and transaction data
 python card_payment.py --dump-raw
 
-# Dry run — builds CSV (or shows pending status), skips email
+# Dry run — logs what would happen (warning, auto-export, or send), skips email and state update
 python card_payment.py --dry-run
 
-# Full run (sends warning email if Vendor IDs missing; sends CSV once all are set)
+# Normal daily run — checks sync status and takes the appropriate action automatically
 python card_payment.py
 
-# Force-include transactions missing a Vendor ID and bypass the already-sent check (recovery only)
+# Bypass all checks (missing Vendor ID, NOT_SYNCED, already-sent) — recovery use only
 python card_payment.py --include-all
 ```
 
-Import into Sage 50 via: **File → Select Import/Export → Accounts Payable → Payments Journal → Import**
+**Import path depends on what was sent:**
+- Both files (auto-export): import `sage_card_transactions_*.csv` via Purchases Journal **first**, then `sage_card_payments_*.csv` via Payments Journal
+- Payment only: **File → Select Import/Export → Accounts Payable → Payments Journal → Import**
 
 ---
 
