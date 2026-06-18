@@ -229,6 +229,35 @@ def build_card_payment_email(
     )
 
 
+def build_card_combined_email(
+    purchase_count: int,
+    payment_count: int,
+    gen_date: str,
+    skipped: list[dict],
+) -> tuple[str, str]:
+    """Return (html, plain_text) when card_payment.py auto-exports SYNC_READY transactions
+    alongside the Payments Journal CSV (used when main.py runs weekly but payment runs daily)."""
+    import_path = (
+        "<strong>Import both files in this order:</strong><br>"
+        "1. <strong>sage_card_transactions_*.csv</strong> &rsaquo; "
+        "File &rsaquo; Select Import/Export &rsaquo; Accounts Payable &rsaquo; "
+        "Purchases Journal &rsaquo; Import<br>"
+        "2. <strong>sage_card_payments_*.csv</strong> &rsaquo; "
+        "File &rsaquo; Select Import/Export &rsaquo; Accounts Payable &rsaquo; "
+        "Payments Journal &rsaquo; Import"
+    )
+    return _build(
+        heading="Card Transactions &amp; Payments Ready for Import",
+        intro=(
+            f"{purchase_count} card transaction(s) and {payment_count} invoice payment(s) "
+            "are attached. Import the Purchases Journal first, then the Payments Journal."
+        ),
+        import_path=import_path,
+        gen_date=gen_date,
+        skipped=skipped,
+    )
+
+
 def build_card_payment_not_exported_email(
     count: int,
     gen_date: str,

@@ -9,10 +9,12 @@ Behavior:
   - If any transactions are missing a Vendor ID, sends a warning-only email
     (no CSV) and exits.  Fix the Accounting Vendor field in Ramp and the next
     run will check again.
-  - If any transactions in the statement are not yet SYNCED in Ramp (i.e.
-    main.py --mark-synced hasn't run for them yet), sends a warning-only
-    email and exits.  This ensures the corresponding AP invoices exist in
-    Sage 50 before the payment CSV is imported to clear them.
+  - If any transactions are SYNC_READY (coded in Ramp but main.py hasn't run
+    yet), auto-exports them as a Purchases Journal CSV and emails both files
+    together so both can be imported the same day.  Marks them as synced in
+    Ramp and updates exported_ids.json so main.py skips them on its next run.
+  - If any transactions are NOT_SYNCED (not yet coded/approved in Ramp),
+    sends a warning-only email and exits until they are resolved.
   - Once all checks pass, sends the CSV and records the statement ID in
     exported_statement_ids.json so subsequent daily runs skip it.
   - --include-all bypasses all three checks (recovery use only).
@@ -36,7 +38,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import statement_client
+import ramp_client
 import card_payment_formatter
+import sage_formatter
 import emailer
 import email_template
 
@@ -45,6 +49,7 @@ _STATE_DIR = Path(os.getenv("STATE_DIR", BASE_DIR))
 LOG_FILE = BASE_DIR / "logs" / f"run_card_payment_{date.today():%Y%m%d}.log"
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output"))
 STATE_FILE = _STATE_DIR / "exported_statement_ids.json"
+_PURCHASES_STATE_FILE = _STATE_DIR / "exported_ids.json"
 
 
 def _setup_logging(dry_run: bool) -> None:
@@ -67,6 +72,20 @@ def _require_env(name: str) -> str:
     if not val:
         sys.exit(f"ERROR: {name} is not set in .env")
     return val
+
+
+def _load_exported_ids() -> set[str]:
+    if not _PURCHASES_STATE_FILE.exists():
+        return set()
+    try:
+        return set(json.loads(_PURCHASES_STATE_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def _save_exported_ids(ids: set[str]) -> None:
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _PURCHASES_STATE_FILE.write_text(json.dumps(sorted(ids), indent=2), encoding="utf-8")
 
 
 def _load_sent_id() -> str | None:
@@ -127,7 +146,7 @@ def main() -> None:
     notify_email = [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
 
     log.info("Fetching most recent paid statement from Ramp...")
-    payment_rows, stmt_ids, skipped, not_synced = statement_client.fetch_paid_statements(
+    payment_rows, stmt_ids, skipped, sync_ready_txns, blocked = statement_client.fetch_paid_statements(
         client_id,
         client_secret,
         include_all=args.include_all,
@@ -171,27 +190,27 @@ def main() -> None:
         log.info("Email sent.")
         return
 
-    # ── Hold until all statement transactions are marked SYNCED in Ramp ──────────
-    if not_synced and not args.include_all:
+    # ── Hold if any transactions are NOT_SYNCED (need coding in Ramp) ───────────
+    if blocked and not args.include_all:
         log.warning(
-            "%d transaction(s) in statement not yet SYNCED in Ramp — holding payment CSV.",
-            len(not_synced),
+            "%d transaction(s) NOT_SYNCED — need coding/approval in Ramp before export.",
+            len(blocked),
         )
         if args.dry_run:
-            log.info("[dry-run] Would send not-synced warning email (no CSV).")
+            log.info("[dry-run] Would send blocked warning email (no CSV).")
             return
 
         subject = (
             f"Ramp Card Payments — Export On Hold: "
-            f"{len(not_synced)} transaction(s) not yet synced "
+            f"{len(blocked)} transaction(s) need coding in Ramp "
             f"({today:%B %d, %Y})"
         )
         html_body, plain_body = email_template.build_card_payment_not_exported_email(
-            count=len(not_synced),
+            count=len(blocked),
             gen_date=f"{today:%Y-%m-%d}",
-            items=not_synced,
+            items=blocked,
         )
-        log.info("Sending not-synced warning email to %s...", notify_email)
+        log.info("Sending blocked warning email to %s...", notify_email)
         emailer.send_csv(
             gmail_user=gmail_user,
             gmail_app_password=gmail_pass,
@@ -201,6 +220,107 @@ def main() -> None:
             body_html=html_body,
         )
         log.info("Email sent.")
+        return
+
+    # ── Auto-export SYNC_READY transactions alongside the payment CSV ─────────
+    # Triggered when main.py runs weekly but card_payment.py runs daily — all
+    # statement transactions are coded/ready in Ramp but haven't been exported yet.
+    if sync_ready_txns and not args.include_all:
+        log.info(
+            "%d transaction(s) are SYNC_READY — auto-exporting Purchases Journal "
+            "alongside Payments Journal.",
+            len(sync_ready_txns),
+        )
+        purchase_rows, purchase_skipped = ramp_client.expand_transactions(sync_ready_txns)
+
+        if purchase_skipped:
+            # Some SYNC_READY transactions are missing GL accounts — hold until fixed
+            log.warning(
+                "%d transaction(s) missing G/L Account — holding until resolved.",
+                len(purchase_skipped),
+            )
+            if args.dry_run:
+                log.info("[dry-run] Would send GL-account warning email (no CSV).")
+                return
+
+            subject = (
+                f"Ramp Card Payments — Export On Hold: "
+                f"{len(purchase_skipped)} transaction(s) missing G/L Account "
+                f"({today:%B %d, %Y})"
+            )
+            html_body, plain_body = email_template.build_card_payment_pending_email(
+                count_skipped=len(purchase_skipped),
+                gen_date=f"{today:%Y-%m-%d}",
+                skipped=purchase_skipped,
+            )
+            log.info("Sending GL-account warning email to %s...", notify_email)
+            emailer.send_csv(
+                gmail_user=gmail_user,
+                gmail_app_password=gmail_pass,
+                to_address=notify_email,
+                subject=subject,
+                body_plain=plain_body,
+                body_html=html_body,
+            )
+            log.info("Email sent.")
+            return
+
+        purchase_csv = sage_formatter.build_csv(purchase_rows)
+        purchase_filename = f"sage_card_transactions_{today:%Y%m%d}.csv"
+        purchase_path = OUTPUT_DIR / purchase_filename
+        with open(purchase_path, "w", newline="", encoding="utf-8") as f:
+            f.write(purchase_csv)
+        log.info("Purchases CSV written to %s", purchase_path)
+
+        csv_data = card_payment_formatter.build_csv(payment_rows)
+        csv_filename = f"sage_card_payments_{today:%Y%m%d}.csv"
+        csv_path = OUTPUT_DIR / csv_filename
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            f.write(csv_data)
+        log.info("Payments CSV written to %s", csv_path)
+
+        if args.dry_run:
+            log.info("[dry-run] Skipping email, state update, and sync.")
+            return
+
+        unique_vendors = len({r["vendor_id"] for r in payment_rows})
+        unique_invoices = len({r["invoice_number"] for r in payment_rows})
+        subject = (
+            f"Ramp Card Transactions & Payments Ready — "
+            f"{len(purchase_rows)} row(s) / {unique_invoices} invoice(s) ({today:%B %d, %Y})"
+        )
+        html_body, plain_body = email_template.build_card_combined_email(
+            purchase_count=len(purchase_rows),
+            payment_count=unique_invoices,
+            gen_date=f"{today:%Y-%m-%d}",
+            skipped=[],
+        )
+        log.info("Sending combined email to %s...", notify_email)
+        emailer.send_csv(
+            gmail_user=gmail_user,
+            gmail_app_password=gmail_pass,
+            to_address=notify_email,
+            subject=subject,
+            body_plain=plain_body,
+            csv_data=purchase_csv,
+            filename=purchase_filename,
+            body_html=html_body,
+            extra_attachments=[(csv_data, csv_filename)],
+        )
+        log.info("Email sent.")
+
+        # Mark the newly exported transactions as synced in Ramp
+        tx_ids = [tx["id"] for tx in sync_ready_txns]
+        log.info("Marking %d transaction(s) as synced in Ramp...", len(tx_ids))
+        ramp_client.mark_synced(client_id, client_secret, tx_ids)
+
+        # Update exported_ids.json so main.py skips these on its next run
+        new_ids = _load_exported_ids() | set(tx_ids)
+        _save_exported_ids(new_ids)
+        log.info("exported_ids.json updated — %d total IDs tracked.", len(new_ids))
+
+        _save_sent_id(stmt_id)
+        log.info("Recorded statement %s as exported.", stmt_id)
         return
 
     # ── Skip if this statement was already exported ───────────────────────────

@@ -281,6 +281,17 @@ def _assign_invoices_and_expand(txns: list[dict]) -> tuple[list[dict], list[dict
     return rows, skipped
 
 
+def expand_transactions(txns: list[dict]) -> tuple[list[dict], list[dict]]:
+    """
+    Expand raw transaction dicts into Sage Purchases Journal rows.
+    Returns (rows, skipped) — same format as fetch_sync_ready_transactions.
+    Use this when you already have the transaction objects and don't need to
+    fetch them from the API (e.g. card_payment.py auto-exporting SYNC_READY
+    statement transactions alongside the Payments Journal CSV).
+    """
+    return _assign_invoices_and_expand(txns)
+
+
 def fetch_transactions_by_ids(
     client_id: str,
     client_secret: str,
