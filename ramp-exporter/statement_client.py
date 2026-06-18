@@ -215,14 +215,15 @@ def _build_payment_rows(stmt: dict, txns: list[dict], include_all: bool = False)
 
     log = logging.getLogger(__name__)
 
-    # Group by vendor_id; collect transactions missing a vendor ID separately
+    # Group by vendor_id; collect transactions missing a vendor ID or not yet synced
     by_vendor: dict[str, list[dict]] = {}
     skipped: list[dict] = []
+    not_synced: list[dict] = []
     for tx in txns:
         vid = _vendor_id(tx)
+        raw_date = tx.get("accounting_date") or tx.get("user_transaction_time") or ""
+        merchant = tx.get("merchant_name") or "unknown merchant"
         if not vid:
-            raw_date = tx.get("accounting_date") or tx.get("user_transaction_time") or ""
-            merchant = tx.get("merchant_name") or "unknown merchant"
             if include_all:
                 # Fall back to merchant name as vendor ID so the row is included
                 vid = merchant
@@ -244,6 +245,23 @@ def _build_payment_rows(stmt: dict, txns: list[dict], include_all: bool = False)
                     tx["id"], merchant, _format_date(raw_date), _tx_amount(tx),
                 )
                 continue
+        tx_sync = tx.get("sync_status", "")
+        if tx_sync != "SYNCED" and not include_all:
+            not_synced.append({
+                "merchant": merchant,
+                "date": _format_date(raw_date),
+                "amount": _tx_amount(tx),
+                "id": tx["id"],
+                "reasons": [
+                    f"sync_status: {tx_sync or 'unknown'} — "
+                    "run card transaction export with --mark-synced first"
+                ],
+                "ramp_url": f"https://app.ramp.com/details/list/transactions/{tx['id']}",
+            })
+            log.warning(
+                "NOT SYNCED %s  %s  %s  $%.2f -- sync_status=%s",
+                tx["id"], merchant, _format_date(raw_date), _tx_amount(tx), tx_sync,
+            )
         by_vendor.setdefault(vid, []).append(tx)
 
     rows = []
@@ -282,17 +300,21 @@ def _build_payment_rows(stmt: dict, txns: list[dict], include_all: bool = False)
                 "tx_id": inv["tx_id"],
             })
 
-    return rows, skipped
+    return rows, skipped, not_synced
 
 
 def fetch_paid_statements(
     client_id: str,
     client_secret: str,
     include_all: bool = False,
-) -> tuple[list[dict], list[str], list[dict]]:
+) -> tuple[list[dict], list[str], list[dict], list[dict]]:
     """
     Fetch the single most recent closed statement and expand into Payments Journal rows.
-    Returns (payment_rows, statement_ids, skipped).
+    Returns (payment_rows, statement_ids, skipped, not_synced).
+
+    skipped     — transactions missing a Vendor ID (can't build a payment row)
+    not_synced  — transactions not yet marked SYNCED in Ramp (card transaction export
+                  hasn't run with --mark-synced yet, or transaction is still NOT_SYNCED)
 
     Always exports only the most recently closed statement — no local state file needed.
     Sage 50's duplicate check number rejection (RAMP-MMDDYY-NNN) prevents accidental
@@ -332,6 +354,7 @@ def fetch_paid_statements(
 
     all_rows: list[dict] = []
     all_skipped: list[dict] = []
+    all_not_synced: list[dict] = []
     stmt_ids: list[str] = []
 
     for stmt in statements:
@@ -340,8 +363,9 @@ def fetch_paid_statements(
             log.warning("Statement %s: no transactions found — skipping.", stmt["id"])
             continue
 
-        rows, skipped = _build_payment_rows(stmt, txns, include_all=include_all)
+        rows, skipped, not_synced = _build_payment_rows(stmt, txns, include_all=include_all)
         all_skipped.extend(skipped)
+        all_not_synced.extend(not_synced)
 
         if not rows:
             log.warning(
@@ -351,19 +375,21 @@ def fetch_paid_statements(
 
         unique_vendors = len({r["vendor_id"] for r in rows})
         log.info(
-            "Statement %s (%s - %s): %d transaction(s), %d vendor(s), %d skipped, payment date %s",
+            "Statement %s (%s - %s): %d transaction(s), %d vendor(s), "
+            "%d skipped, %d not synced, payment date %s",
             stmt["id"],
             _format_date(stmt.get("start_date") or ""),
             _format_date(stmt.get("end_date") or ""),
             len(txns),
             unique_vendors,
             len(skipped),
+            len(not_synced),
             rows[0]["payment_date"] if rows else "?",
         )
         all_rows.extend(rows)
         stmt_ids.append(stmt["id"])
 
-    return all_rows, stmt_ids, all_skipped
+    return all_rows, stmt_ids, all_skipped, all_not_synced
 
 
 def dump_raw_statement(client_id: str, client_secret: str) -> tuple[dict | None, list[dict]]:
