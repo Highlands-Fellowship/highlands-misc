@@ -2,7 +2,13 @@
 Builds a Sage 50 Payments Journal CSV from bill payment rows.
 
 Column order matches the working PAYMENTS.CSV export exactly (39 columns).
-One row per bill — each Ramp bill has a single invoice number and one payment.
+One row per bill invoice. When Ramp groups multiple bills into a single ACH
+payment, billpay_client._group_payments() combines them into one logical
+multi-distribution payment:
+  - Number of Distributions  = number of bills paid together
+  - Total Paid on Invoice(s) = sum of those bills (same on every row)
+  - Invoice Paid             = individual invoice number (one per row)
+  - Amount                   = individual bill amount (one per row)
 
 Configurable via env vars:
   BILLPAY_CASH_ACCOUNT   — bank account debited on payment (default 1000-AB)
@@ -64,8 +70,8 @@ def build_csv(payment_rows: list[dict]) -> str:
     Build a Payments Journal CSV from bill payment row dicts.
 
     Each dict must have:
-      vendor_id, vendor_name, check_number, payment_date, memo,
-      total_amount, invoice_number, payment_method
+      vendor_id, vendor_name, check_number, payment_date, memo, amount,
+      total_amount, num_distributions, invoice_number, payment_method
     """
     cash_account = os.getenv("BILLPAY_CASH_ACCOUNT", _DEFAULT_CASH_ACCOUNT)
     ap_account = os.getenv("BILLPAY_AP_ACCOUNT", _DEFAULT_AP_ACCOUNT)
@@ -75,7 +81,8 @@ def build_csv(payment_rows: list[dict]) -> str:
     writer.writerow(_COLUMNS)
 
     for row in payment_rows:
-        amount_str = f"{float(row['total_amount']):.2f}"
+        total_str = f"{float(row['total_amount']):.2f}"
+        amount_str = f"{float(row['amount']):.2f}"
 
         writer.writerow([
             row["vendor_id"],
@@ -91,13 +98,13 @@ def build_csv(payment_rows: list[dict]) -> str:
             row["payment_date"],
             row["memo"],
             cash_account,
-            amount_str,              # Total Paid on Invoice(s)
+            total_str,               # Total Paid on Invoice(s)
             "",                       # Discount Account
             "FALSE",                  # Prepayment
             "FALSE",                  # Customer Payment
             "",                       # AP Date Cleared in Bank Rec
             "Yes",                    # Detailed Payments
-            "1",                      # Number of Distributions (1 invoice per Ramp bill)
+            str(row["num_distributions"]),
             row["invoice_number"],
             "0.00",                   # Discount Amount
             "0.00",                   # Quantity

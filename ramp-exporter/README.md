@@ -208,7 +208,11 @@ Import into Sage 50 via: **File → Select Import/Export → General Ledger → 
 | Cash Account | `BILLPAY_CASH_ACCOUNT` env var (default `1000-AB`) |
 | Invoice Paid | `invoice_number` (see note below on duplicate invoice numbers) |
 | G/L Account (AP clearing) | `BILLPAY_AP_ACCOUNT` env var (default `2200`) |
-| Amount | Total bill amount |
+| Number of Distributions | Count of bills Ramp paid together in the same ACH payment |
+| Total Paid on Invoice(s) | Sum of those bills' amounts (same on every row in the group) |
+| Amount | This bill's own amount |
+
+> **Multiple bills paid together:** if Ramp settles several bills to the same vendor in one ACH payment (e.g. a utility bill covering multiple meters), they share a `payment.id` and are combined into one multi-distribution Payments Journal entry — one row per bill, each showing its own amount, with the shared total and distribution count repeated on every row.
 
 > **Duplicate invoice numbers:** some vendors reuse the same invoice number across unrelated bills over time, which Sage 50 rejects as a duplicate reference on import. Add the vendor's ID to `BILLPAY_DEDUPE_VENDORS` in `.env` (comma-separated for multiple) to append a short unique suffix to that vendor's invoice numbers only — e.g. `AP-045771` becomes `AP-045771-3f2a`. The suffix comes from the Ramp bill ID, so it's stable across re-runs and used identically on both the Purchases and Payments Journal rows for a bill. Vendors not listed are unaffected.
 

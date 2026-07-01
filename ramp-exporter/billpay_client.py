@@ -154,8 +154,20 @@ def _payment_method(bill: dict) -> str:
     return "Check"
 
 
+def _bill_amount(bill: dict) -> float:
+    amt_obj = bill.get("amount") or {}
+    if isinstance(amt_obj, dict):
+        return amt_obj.get("amount", 0) / amt_obj.get("minor_unit_conversion_rate", 100)
+    return float(amt_obj)
+
+
 def _expand_payment(bill: dict) -> dict:
-    """Return one payment row dict for the Payments Journal."""
+    """Return one payment row dict for this bill's own invoice.
+
+    "amount" is this bill's own total — NOT payment.amount, which is the total
+    across every bill Ramp grouped into the same ACH payment. Rows sharing a
+    payment are combined into one multi-distribution entry by _group_payments().
+    """
     payment = bill.get("payment") or {}
     vendor = bill.get("vendor") or {}
 
@@ -166,12 +178,6 @@ def _expand_payment(bill: dict) -> dict:
         or ""
     )
     payment_date = _format_date(raw_date)
-
-    amt_obj = payment.get("amount") or bill.get("amount") or {}
-    if isinstance(amt_obj, dict):
-        total = amt_obj.get("amount", 0) / amt_obj.get("minor_unit_conversion_rate", 100)
-    else:
-        total = float(amt_obj)
 
     memo = _clean_text(bill.get("memo") or bill.get("vendor_memo") or "")
     vendor_id = _vendor_id(bill)
@@ -184,10 +190,34 @@ def _expand_payment(bill: dict) -> dict:
         "check_number": (payment.get("customer_friendly_payment_id") or "").strip(),
         "payment_date": payment_date,
         "memo": memo,
-        "total_amount": total,
+        "amount": _bill_amount(bill),
         "invoice_number": _effective_invoice_number(bill, vendor_id),
         "payment_method": _payment_method(bill),
     }
+
+
+def _group_payments(payment_rows: list[dict]) -> list[dict]:
+    """Combine bills paid together in a single Ramp ACH payment into one
+    multi-distribution Payments Journal entry.
+
+    Groups by Ramp payment ID (falls back to vendor+check+date if missing).
+    Each row keeps its own "amount"; "total_amount" and "num_distributions"
+    are set to the group's sum/count so Sage 50 sees one payment covering
+    multiple invoices, matching how card statement payments are grouped.
+    """
+    groups: dict[str, list[dict]] = {}
+    for row in payment_rows:
+        key = row["payment_id"] or f"{row['vendor_id']}|{row['check_number']}|{row['payment_date']}"
+        groups.setdefault(key, []).append(row)
+
+    grouped: list[dict] = []
+    for rows in groups.values():
+        total = sum(r["amount"] for r in rows)
+        for r in rows:
+            r["total_amount"] = total
+            r["num_distributions"] = len(rows)
+            grouped.append(r)
+    return grouped
 
 
 def _expand_bill(bill: dict) -> list[dict]:
@@ -307,7 +337,7 @@ def fetch_completed_bills(
         purchase_rows.extend(_expand_bill(bill))
         payment_rows.append(_expand_payment(bill))
 
-    return purchase_rows, payment_rows, skipped
+    return purchase_rows, _group_payments(payment_rows), skipped
 
 
 def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None:
