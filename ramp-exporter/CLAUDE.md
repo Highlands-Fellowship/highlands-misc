@@ -125,6 +125,7 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 - Purchase rows reuse `sage_formatter.build_csv()` (same 49-column format as card transactions)
 - Payment rows go to `billpay_payment_formatter.build_csv()` — 39-column Payments Journal CSV
 - Both CSVs emailed together as attachments; import Purchases first, then Payments
+- **Duplicate invoice numbers:** some vendors reuse the same `invoice_number` across unrelated bills, which Sage 50 rejects on import. `BILLPAY_DEDUPE_VENDORS` (comma-separated vendor IDs) opts specific vendors into `_effective_invoice_number()` — appends a suffix from the last 4 chars of the Ramp bill ID (`{invoice[:15]}-{id[-4:]}`, truncated to 20 chars). Deterministic per bill ID (stable across re-runs); computed once and shared between the purchase row (`invoice`) and payment row (`invoice_number`) for the same bill, since Sage matches payments to invoices by that exact string. Vendors not listed keep their raw Ramp invoice number unchanged.
 - State file: `exported_bill_ids.json`
 
 ### Shared modules

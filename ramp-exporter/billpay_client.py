@@ -14,10 +14,16 @@ Key field locations (verify with --dump-raw against a live bill):
   - GL Account:  line_items[].accounting_field_selections[type=GL_ACCOUNT].external_code
   - Amount:      line_items[].amount.amount / minor_unit_conversion_rate
   - Department:  accounting_field_selections[type=DEPARTMENT].external_id
+
+Some vendors reuse the same invoice number across unrelated bills, which Sage 50
+rejects as a duplicate reference on import. BILLPAY_DEDUPE_VENDORS (comma-separated
+vendor IDs) opts specific vendors into a uniquifying suffix on the invoice number —
+see _effective_invoice_number().
 """
 
 import datetime
 import logging
+import os
 import requests
 
 RAMP_TOKEN_URL = "https://api.ramp.com/developer/v1/token"
@@ -106,6 +112,26 @@ def _line_item_amount(item: dict) -> float:
     return float(amt)
 
 
+def _dedupe_vendors() -> set[str]:
+    return {v.strip() for v in os.getenv("BILLPAY_DEDUPE_VENDORS", "").split(",") if v.strip()}
+
+
+def _effective_invoice_number(bill: dict, vendor_id: str) -> str:
+    """Invoice number to use on the Sage 50 rows.
+
+    For vendors listed in BILLPAY_DEDUPE_VENDORS, append a suffix derived from the
+    Ramp bill ID so bills that reuse the same invoice number don't collide in Sage.
+    Deterministic per bill ID, so the same bill always maps to the same value across
+    export runs. Must be used identically for both the Purchases and Payments Journal
+    rows of a given bill, since Sage matches payments to invoices by this string.
+    """
+    raw = (bill.get("invoice_number") or "").strip()
+    if vendor_id not in _dedupe_vendors():
+        return raw
+    suffix = bill["id"][-4:]
+    return f"{raw[:15]}-{suffix}"[:20]
+
+
 def _validate(bill: dict) -> list[str]:
     errors = []
     if not _vendor_id(bill):
@@ -148,17 +174,18 @@ def _expand_payment(bill: dict) -> dict:
         total = float(amt_obj)
 
     memo = _clean_text(bill.get("memo") or bill.get("vendor_memo") or "")
+    vendor_id = _vendor_id(bill)
 
     return {
         "id": bill["id"],
         "payment_id": (payment.get("id") or "").strip(),
-        "vendor_id": _vendor_id(bill),
+        "vendor_id": vendor_id,
         "vendor_name": (vendor.get("name") or vendor.get("remote_name") or "").strip(),
         "check_number": (payment.get("customer_friendly_payment_id") or "").strip(),
         "payment_date": payment_date,
         "memo": memo,
         "total_amount": total,
-        "invoice_number": bill.get("invoice_number") or "",
+        "invoice_number": _effective_invoice_number(bill, vendor_id),
         "payment_method": _payment_method(bill),
     }
 
@@ -166,7 +193,7 @@ def _expand_payment(bill: dict) -> dict:
 def _expand_bill(bill: dict) -> list[dict]:
     """Return one dict per line_item — same structure as card transaction rows."""
     vendor_id = _vendor_id(bill)
-    invoice = bill.get("invoice_number") or ""
+    invoice = _effective_invoice_number(bill, vendor_id)
     raw_date = (
         bill.get("accounting_date")
         or bill.get("paid_at")

@@ -211,9 +211,11 @@ Import into Sage 50 via: **File → Select Import/Export → General Ledger → 
 | Check Number | `payment.customer_friendly_payment_id` |
 | Date | `payment.payment_date` (falls back to `payment.effective_date`, `paid_at`) |
 | Cash Account | `BILLPAY_CASH_ACCOUNT` env var (default `1000-AB`) |
-| Invoice Paid | `invoice_number` |
+| Invoice Paid | `invoice_number` (see note below on duplicate invoice numbers) |
 | G/L Account (AP clearing) | `BILLPAY_AP_ACCOUNT` env var (default `2200`) |
 | Amount | Total bill amount |
+
+> **Duplicate invoice numbers:** some vendors reuse the same invoice number across unrelated bills over time, which Sage 50 rejects as a duplicate reference on import. Add the vendor's ID to `BILLPAY_DEDUPE_VENDORS` in `.env` (comma-separated for multiple) to append a short unique suffix to that vendor's invoice numbers only — e.g. `AP-045771` becomes `AP-045771-3f2a`. The suffix is derived from the Ramp bill ID, so it's stable across re-runs and used identically on both the Purchases and Payments Journal rows for a bill. Vendors not listed are unaffected.
 
 ### Running
 
@@ -273,6 +275,8 @@ REIMBURSEMENT_CLEARING_ACCOUNT=2200    # ACH clearing account for reimbursements
 REIMBURSEMENT_BANK_ACCOUNT=1003-AB     # Bank account debited on reimbursement payment
 BILLPAY_CASH_ACCOUNT=1000-AB           # Bank account debited on bill payment
 BILLPAY_AP_ACCOUNT=2200                # AP clearing account for bill payments
+BILLPAY_DEDUPE_VENDORS=                # Comma-separated vendor IDs whose invoice numbers
+                                       # need a uniquifying suffix (see Bill Pay section)
 CARD_PAYMENT_CASH_ACCOUNT=1003-AB      # Bank account debited on card statement payment
 CARD_PAYMENT_AP_ACCOUNT=2104-AB        # AP account cleared by card statement payment
 CARD_PAYMENT_ENTITY_ID=                # Entity ID from balance_sections[0].entity_id in
