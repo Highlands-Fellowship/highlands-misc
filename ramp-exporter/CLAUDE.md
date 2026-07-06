@@ -38,6 +38,9 @@ python card_payment.py          # no --mark-synced needed (no Ramp sync for paym
 python main.py --mark-synced-ids ID1 ID2
 python reimburse.py --mark-synced-ids ID1
 python billpay.py --mark-synced-ids ID1
+
+# Re-export: rebuild CSVs for specific bill IDs regardless of sync status
+python billpay.py --reexport-ids ID1 ID2
 ```
 
 ## Required `.env` file
@@ -121,7 +124,8 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
   - Date: `accounting_date` → `paid_at` → `issued_at`
   - Payment check number: `payment.customer_friendly_payment_id`
   - Payment date: `payment.payment_date` → `payment.effective_date` → `paid_at`
-- `fetch_completed_bills` returns a 3-tuple `(purchase_rows, payment_rows, skipped)`
+- `fetch_completed_bills` returns a 3-tuple `(purchase_rows, payment_rows, skipped)`; both it and `fetch_bills_by_ids` (used by `--reexport-ids`) share the validate/expand loop via `_expand_bills()`
+- `fetch_bills_by_ids` fetches specific bills directly by ID (`GET /bills/{id}`), bypassing the `NOT_SYNCED` filter and `exported_bill_ids.json` — use it to rebuild CSVs for a bill that's already synced (e.g. to verify a `BILLPAY_DEDUPE_VENDORS` change took effect, since a synced bill no longer shows up in a normal fetch)
 - Purchase rows reuse `sage_formatter.build_csv()` (same 49-column format as card transactions)
 - Payment rows go to `billpay_payment_formatter.build_csv()` — 39-column Payments Journal CSV
 - **Multi-bill payments:** when Ramp groups several bills into one ACH payment (same `payment.id` — e.g. one utility payment covering 4 meters), `_group_payments()` combines them into a single multi-distribution entry, same pattern as card statement payments: `amount` = each bill's own total (one per row), `total_amount`/`Number of Distributions` = group sum/count (repeated on every row in the group). `_expand_payment()` must use the bill's own `amount`, never `payment.amount` — that field is the *group* total and duplicating it per row was the original bug.

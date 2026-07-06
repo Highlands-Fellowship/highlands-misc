@@ -244,6 +244,10 @@ python billpay.py --dump-raw --any-status
 
 # Mark specific IDs as synced without re-exporting (recovery)
 python billpay.py --mark-synced-ids ID1 ID2
+
+# Re-export specific bill IDs regardless of sync status (e.g. to verify a
+# BILLPAY_DEDUPE_VENDORS change — a synced bill won't show up in a normal run)
+python billpay.py --dry-run --reexport-ids ID1
 ```
 
 **Import order matters:**

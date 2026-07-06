@@ -12,6 +12,7 @@ Usage:
   python billpay.py --date-from 2026-01-01           # pull from a specific date (ignores state)
   python billpay.py --limit 1                        # cap export at N bills (for test imports)
   python billpay.py --mark-synced-ids ID1 ID2 ...    # mark specific IDs synced without re-exporting
+  python billpay.py --reexport-ids ID1 ID2 ...       # re-export specific bill IDs regardless of sync status
 """
 
 import argparse
@@ -82,6 +83,7 @@ def main() -> None:
     parser.add_argument("--limit", metavar="N", type=int, help="cap export at N bills")
     parser.add_argument("--mark-synced", action="store_true", help="mark exported bills and payments as synced in Ramp after emailing")
     parser.add_argument("--mark-synced-ids", metavar="ID", nargs="+", help="mark specific bill IDs as synced (runs BILL_SYNC + BILL_PAYMENT_SYNC) without re-exporting")
+    parser.add_argument("--reexport-ids", metavar="ID", nargs="+", help="re-export specific bill IDs regardless of state file or sync status")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -93,6 +95,62 @@ def main() -> None:
     if args.mark_synced_ids:
         log.info("Marking %d bill(s) as synced in Ramp...", len(args.mark_synced_ids))
         billpay_client.mark_synced(client_id, client_secret, args.mark_synced_ids)
+        return
+
+    if args.reexport_ids:
+        gmail_user = _require_env("GMAIL_USER")
+        gmail_pass = _require_env("GMAIL_APP_PASSWORD")
+        notify_email = [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
+
+        log.info("Re-fetching %d specific bill(s) by ID...", len(args.reexport_ids))
+        purchase_rows, payment_rows, skipped = billpay_client.fetch_bills_by_ids(
+            client_id, client_secret, args.reexport_ids
+        )
+        if skipped:
+            log.warning("%d bill(s) skipped due to missing fields.", len(skipped))
+        if not purchase_rows:
+            log.info("No valid rows produced — check IDs and Ramp field setup.")
+            return
+
+        unique_bills = len({row["id"] for row in purchase_rows})
+        today = date.today()
+
+        purchase_csv = sage_formatter.build_csv(purchase_rows)
+        purchase_filename = f"sage_bill_purchases_reexport_{today:%Y%m%d}.csv"
+        purchase_path = OUTPUT_DIR / purchase_filename
+        with open(purchase_path, "w", newline="", encoding="utf-8") as f:
+            f.write(purchase_csv)
+        log.info("Purchases CSV written to %s", purchase_path)
+
+        payment_csv = billpay_payment_formatter.build_csv(payment_rows)
+        payment_filename = f"sage_bill_payments_reexport_{today:%Y%m%d}.csv"
+        payment_path = OUTPUT_DIR / payment_filename
+        with open(payment_path, "w", newline="", encoding="utf-8") as f:
+            f.write(payment_csv)
+        log.info("Payments CSV written to %s", payment_path)
+
+        if args.dry_run:
+            log.info("[dry-run] Skipping email.")
+            return
+
+        subject = f"Ramp Bill Payments Re-export -- {unique_bills} bill(s) ({today:%B %d, %Y})"
+        html_body, plain_body = email_template.build_billpay_email(
+            count=unique_bills,
+            gen_date=f"{today:%Y-%m-%d}",
+            skipped=skipped,
+        )
+        emailer.send_csv(
+            gmail_user=gmail_user,
+            gmail_app_password=gmail_pass,
+            to_address=notify_email,
+            subject=subject,
+            body_plain=plain_body,
+            csv_data=purchase_csv,
+            filename=purchase_filename,
+            body_html=html_body,
+            extra_attachments=[(payment_csv, payment_filename)],
+        )
+        log.info("Re-export email sent.")
         return
 
     if args.dump_raw:

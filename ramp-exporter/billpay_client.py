@@ -265,7 +265,6 @@ def fetch_completed_bills(
       purchase_rows — for Sage 50 Purchases Journal (sage_formatter)
       payment_rows  — for Sage 50 Payments Journal (billpay_payment_formatter)
     """
-    log = logging.getLogger(__name__)
     token = _get_token(client_id, client_secret)
 
     params: dict = {"page_size": 100}
@@ -312,6 +311,15 @@ def fetch_completed_bills(
         )
     )
 
+    return _expand_bills(raw_bills)
+
+
+def _expand_bills(raw_bills: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+    """Validate and expand a list of raw bill dicts into Sage rows.
+
+    Shared by fetch_completed_bills() and fetch_bills_by_ids().
+    """
+    log = logging.getLogger(__name__)
     purchase_rows: list[dict] = []
     payment_rows: list[dict] = []
     skipped: list[dict] = []
@@ -338,6 +346,37 @@ def fetch_completed_bills(
         payment_rows.append(_expand_payment(bill))
 
     return purchase_rows, _group_payments(payment_rows), skipped
+
+
+def fetch_bills_by_ids(
+    client_id: str,
+    client_secret: str,
+    bill_ids: list[str],
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """
+    Fetch specific bills by ID and expand into Sage rows. Bypasses the
+    NOT_SYNCED filter and the exported_bill_ids.json state file — for
+    re-exporting a bill that was already synced (e.g. to verify a config
+    change like BILLPAY_DEDUPE_VENDORS took effect, or to recover a bill
+    lost during import testing).
+    Returns (purchase_rows, payment_rows, skipped).
+    """
+    log = logging.getLogger(__name__)
+    token = _get_token(client_id, client_secret)
+
+    bills = []
+    for bid in bill_ids:
+        resp = requests.get(
+            f"{RAMP_BILLS_URL}/{bid}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        if not resp.ok:
+            log.error("Could not fetch bill %s: %s %s", bid, resp.status_code, resp.text)
+            continue
+        bills.append(resp.json())
+
+    return _expand_bills(bills)
 
 
 def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None:
