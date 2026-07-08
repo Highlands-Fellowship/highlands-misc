@@ -78,7 +78,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--dump-raw", action="store_true")
     parser.add_argument("--vendor", metavar="NAME", help="filter --dump-raw by vendor name (substring)")
-    parser.add_argument("--any-status", action="store_true", help="with --dump-raw: include already-synced bills (useful for inspecting payment structure)")
+    parser.add_argument("--any-status", action="store_true", help="with --dump-raw: bypass sync_status and status_summary filters (inspect bills in any state)")
     parser.add_argument("--date-from", metavar="YYYY-MM-DD")
     parser.add_argument("--limit", metavar="N", type=int, help="cap export at N bills")
     parser.add_argument("--mark-synced", action="store_true", help="mark exported bills and payments as synced in Ramp after emailing")
@@ -160,8 +160,11 @@ def main() -> None:
         )
         if bill is None:
             hint = f" matching '{args.vendor}'" if args.vendor else ""
-            status_hint = " (any sync status)" if args.any_status else " (NOT_SYNCED only — try --any-status to include synced bills)"
-            print(f"No PAYMENT_COMPLETED bill found{hint}{status_hint}.")
+            status_hint = (
+                " (any sync/payment status)" if args.any_status
+                else " (NOT_SYNCED + PAYMENT_COMPLETED only — try --any-status for other states)"
+            )
+            print(f"No bill found{hint}{status_hint}.")
         else:
             print("=== Bill (raw) ===")
             pprint.pprint(bill)

@@ -427,11 +427,13 @@ def dump_raw_bill(
     vendor: str | None = None,
     any_status: bool = False,
 ) -> tuple[dict | None, dict]:
-    """Return the oldest matching PAYMENT_COMPLETED bill for inspection.
+    """Return the oldest matching bill for inspection.
 
-    By default only returns NOT_SYNCED bills (same filter as the normal export).
-    Pass any_status=True to include already-synced bills — useful for inspecting
-    the payment sub-object structure after a bill has been marked synced.
+    By default only returns NOT_SYNCED + PAYMENT_COMPLETED bills (same filter
+    as the normal export). Pass any_status=True to bypass both the sync_status
+    and status_summary filters — useful for inspecting bills in other states
+    (e.g. a check payment that's been initiated but not yet completed) or
+    already-synced bills (e.g. the payment sub-object after a bill is marked synced).
     """
     token = _get_token(client_id, client_secret)
     params: dict = {"page_size": 100}
@@ -451,7 +453,7 @@ def dump_raw_bill(
         for bill in last_body.get("data", []):
             if not any_status and bill.get("sync_status") != "NOT_SYNCED":
                 continue
-            if bill.get("status_summary") != "PAYMENT_COMPLETED":
+            if not any_status and bill.get("status_summary") != "PAYMENT_COMPLETED":
                 continue
             if vendor:
                 name = ((bill.get("vendor") or {}).get("name") or "").lower()
