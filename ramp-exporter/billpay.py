@@ -9,6 +9,8 @@ Usage:
   python billpay.py --dry-run                        # build CSV, skip email + state
   python billpay.py --dump-raw                       # print raw JSON for first matching bill
   python billpay.py --dump-raw --vendor "Verizon"    # filter --dump-raw by vendor name
+  python billpay.py --dump-raw --vendor "Verizon" --any-status  # any sync/payment status; lists all matches
+  python billpay.py --dump-raw --bill-id ID          # inspect one specific bill, bypassing all filters
   python billpay.py --date-from 2026-01-01           # pull from a specific date (ignores state)
   python billpay.py --limit 1                        # cap export at N bills (for test imports)
   python billpay.py --mark-synced-ids ID1 ID2 ...    # mark specific IDs synced without re-exporting
@@ -79,6 +81,7 @@ def main() -> None:
     parser.add_argument("--dump-raw", action="store_true")
     parser.add_argument("--vendor", metavar="NAME", help="filter --dump-raw by vendor name (substring)")
     parser.add_argument("--any-status", action="store_true", help="with --dump-raw: bypass sync_status and status_summary filters (inspect bills in any state)")
+    parser.add_argument("--bill-id", metavar="ID", help="with --dump-raw: fetch one specific bill by ID, bypassing all filters")
     parser.add_argument("--date-from", metavar="YYYY-MM-DD")
     parser.add_argument("--limit", metavar="N", type=int, help="cap export at N bills")
     parser.add_argument("--mark-synced", action="store_true", help="mark exported bills and payments as synced in Ramp after emailing")
@@ -155,30 +158,50 @@ def main() -> None:
 
     if args.dump_raw:
         import pprint
-        bill, _ = billpay_client.dump_raw_bill(
-            client_id, client_secret, vendor=args.vendor, any_status=args.any_status
-        )
-        if bill is None:
-            hint = f" matching '{args.vendor}'" if args.vendor else ""
-            status_hint = (
-                " (any sync/payment status)" if args.any_status
-                else " (NOT_SYNCED + PAYMENT_COMPLETED only — try --any-status for other states)"
-            )
-            print(f"No bill found{hint}{status_hint}.")
+
+        if args.bill_id:
+            bill = billpay_client.dump_raw_bill_by_id(client_id, client_secret, args.bill_id)
+            if bill is None:
+                print(f"No bill found with ID '{args.bill_id}'.")
+                return
+            candidates = [bill]
         else:
-            print("=== Bill (raw) ===")
-            pprint.pprint(bill)
-            print("\n=== accounting_field_selections (top-level) ===")
-            for sel in bill.get("accounting_field_selections") or []:
-                pprint.pprint(sel)
-            print("\n=== line_items ===")
-            for i, item in enumerate(bill.get("line_items") or [], 1):
-                print(f"  -- line item {i} --")
-                pprint.pprint(item)
-            print("\n=== vendor ===")
-            pprint.pprint(bill.get("vendor"))
-            print("\n=== payment ===")
-            pprint.pprint(bill.get("payment"))
+            bill, candidates = billpay_client.dump_raw_bill(
+                client_id, client_secret, vendor=args.vendor, any_status=args.any_status
+            )
+            if bill is None:
+                hint = f" matching '{args.vendor}'" if args.vendor else ""
+                status_hint = (
+                    " (any sync/payment status)" if args.any_status
+                    else " (NOT_SYNCED + PAYMENT_COMPLETED only — try --any-status for other states)"
+                )
+                print(f"No bill found{hint}{status_hint}.")
+                return
+
+        if len(candidates) > 1:
+            print(f"=== {len(candidates)} matching bill(s) — showing full detail for the oldest ===")
+            for b in candidates:
+                raw_date = b.get("accounting_date") or b.get("paid_at") or b.get("issued_at") or ""
+                payment = b.get("payment") or {}
+                print(
+                    f"  {b['id']}  {raw_date[:10]}  status_summary={b.get('status_summary')}  "
+                    f"payment_method={payment.get('payment_method')}  amount={b.get('amount', {}).get('amount', 0) / 100:.2f}"
+                )
+            print(f"\nRe-run with --bill-id <ID> to inspect a specific one.\n")
+
+        print("=== Bill (raw) ===")
+        pprint.pprint(bill)
+        print("\n=== accounting_field_selections (top-level) ===")
+        for sel in bill.get("accounting_field_selections") or []:
+            pprint.pprint(sel)
+        print("\n=== line_items ===")
+        for i, item in enumerate(bill.get("line_items") or [], 1):
+            print(f"  -- line item {i} --")
+            pprint.pprint(item)
+        print("\n=== vendor ===")
+        pprint.pprint(bill.get("vendor"))
+        print("\n=== payment ===")
+        pprint.pprint(bill.get("payment"))
         return
 
     gmail_user = _require_env("GMAIL_USER")

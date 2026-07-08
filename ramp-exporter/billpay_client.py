@@ -421,13 +421,29 @@ def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None
         log.info("[%s] Marked %d bill(s) as synced in Ramp.", sync_type, len(bill_ids))
 
 
+def dump_raw_bill_by_id(client_id: str, client_secret: str, bill_id: str) -> dict | None:
+    """Fetch one specific bill by ID, bypassing all filters — for inspecting a
+    bill you've already identified (e.g. from Ramp's UI or a --dump-raw list)."""
+    token = _get_token(client_id, client_secret)
+    resp = requests.get(
+        f"{RAMP_BILLS_URL}/{bill_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+    )
+    if not resp.ok:
+        return None
+    return resp.json()
+
+
 def dump_raw_bill(
     client_id: str,
     client_secret: str,
     vendor: str | None = None,
     any_status: bool = False,
-) -> tuple[dict | None, dict]:
-    """Return the oldest matching bill for inspection.
+) -> tuple[dict | None, list[dict]]:
+    """Return the oldest matching bill for inspection, plus every matching
+    bill found — a vendor can have several bills in different states, and
+    the oldest one may not be the one you're looking for.
 
     By default only returns NOT_SYNCED + PAYMENT_COMPLETED bills (same filter
     as the normal export). Pass any_status=True to bypass both the sync_status
@@ -467,7 +483,7 @@ def dump_raw_bill(
         params = {}
 
     if not candidates:
-        return None, last_body
+        return None, []
 
     candidates.sort(
         key=lambda b: (
@@ -477,4 +493,4 @@ def dump_raw_bill(
             or ""
         )
     )
-    return candidates[0], last_body
+    return candidates[0], candidates
