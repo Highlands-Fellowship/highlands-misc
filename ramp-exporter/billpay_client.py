@@ -27,6 +27,7 @@ see _effective_invoice_number().
 import datetime
 import logging
 import os
+import re
 import requests
 
 RAMP_TOKEN_URL = "https://api.ramp.com/developer/v1/token"
@@ -400,46 +401,72 @@ def fetch_bills_by_ids(
     return _expand_bills(bills)
 
 
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
+
 def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None:
-    """Mark a list of bill IDs as synced in Ramp (BILL_SYNC + BILL_PAYMENT_SYNC)."""
+    """Mark a list of bill IDs as synced in Ramp (BILL_SYNC + BILL_PAYMENT_SYNC).
+
+    A check bill exported while still PAYMENT_PROCESSING (see
+    _is_exportable_status) isn't yet eligible for BILL_PAYMENT_SYNC on Ramp's
+    side — it rejects the whole batch with DEVELOPER_7062 ("not ready for
+    sync") if even one bill isn't ready. When that happens, the offending IDs
+    are parsed out of the error message and retried without them, so the rest
+    of the batch still gets confirmed. Deferred bills stay exported to Sage
+    but won't show as synced in Ramp until a later --mark-synced-ids run once
+    their check clears.
+    """
     import uuid
     log = logging.getLogger(__name__)
     token = _get_token(client_id, client_secret, write=True)
 
     for sync_type in ("BILL_SYNC", "BILL_PAYMENT_SYNC"):
-        resp = requests.post(
-            RAMP_SYNCS_URL,
-            headers={"Authorization": f"Bearer {token}"},
-            json={
-                "idempotency_key": str(uuid.uuid4()),
-                "sync_type": sync_type,
-                "successful_syncs": [
-                    {"id": bid, "reference_id": bid}
-                    for bid in bill_ids
-                ],
-            },
-            timeout=30,
-        )
-        if not resp.ok:
-            # DEVELOPER_7062 means one or more objects are already synced — safe to
-            # skip for BILL_SYNC and proceed to BILL_PAYMENT_SYNC (e.g. recovery runs).
+        pending = list(bill_ids)
+        while pending:
+            resp = requests.post(
+                RAMP_SYNCS_URL,
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "idempotency_key": str(uuid.uuid4()),
+                    "sync_type": sync_type,
+                    "successful_syncs": [
+                        {"id": bid, "reference_id": bid}
+                        for bid in pending
+                    ],
+                },
+                timeout=30,
+            )
+            if resp.ok:
+                log.info("[%s] Marked %d bill(s) as synced in Ramp.", sync_type, len(pending))
+                break
+
             try:
                 body = resp.json()
-                error_code = (
-                    body.get("error_code")
-                    or (body.get("error_v2") or {}).get("error_code")
-                    or ""
-                )
+                error_v2 = body.get("error_v2") or {}
+                error_code = body.get("error_code") or error_v2.get("error_code") or ""
+                message = error_v2.get("message") or body.get("message") or ""
             except Exception:
                 error_code = ""
-            if sync_type == "BILL_SYNC" and error_code == "DEVELOPER_7062":
-                log.info("[%s] Bill(s) already synced, skipping.", sync_type)
-                continue
+                message = ""
+
+            if error_code == "DEVELOPER_7062":
+                not_ready = set(_UUID_RE.findall(message)) & set(pending)
+                if not_ready:
+                    log.warning(
+                        "[%s] %d bill(s) not ready for sync yet — deferring until a "
+                        "later --mark-synced-ids run: %s",
+                        sync_type, len(not_ready), ", ".join(sorted(not_ready)),
+                    )
+                    pending = [b for b in pending if b not in not_ready]
+                    continue
+                if sync_type == "BILL_SYNC":
+                    log.info("[%s] Bill(s) already synced, skipping.", sync_type)
+                    break
+
             raise RuntimeError(
                 f"Ramp sync API ({sync_type}) {resp.status_code}\n"
                 f"body: {resp.text}"
             )
-        log.info("[%s] Marked %d bill(s) as synced in Ramp.", sync_type, len(bill_ids))
 
 
 def dump_raw_bill_by_id(client_id: str, client_secret: str, bill_id: str) -> dict | None:

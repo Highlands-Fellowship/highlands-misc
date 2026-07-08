@@ -296,7 +296,10 @@ def main() -> None:
 
     if args.mark_synced:
         bill_ids = list({row["id"] for row in purchase_rows})
-        log.info("Marking %d bill(s) as synced in Ramp...", len(bill_ids))
+        log.info(
+            "Marking %d bill(s) as synced in Ramp: %s",
+            len(bill_ids), ", ".join(sorted(bill_ids)),
+        )
         billpay_client.mark_synced(client_id, client_secret, bill_ids)
 
 
