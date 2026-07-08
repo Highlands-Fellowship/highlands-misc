@@ -115,7 +115,7 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 
 ### Bill pay (`billpay_client.py` → `sage_formatter.py` + `billpay_payment_formatter.py`)
 
-- Filters: `sync_status == "NOT_SYNCED"` AND `status_summary == "PAYMENT_COMPLETED"` (bills have no `SYNC_READY` status)
+- Filters: `sync_status == "NOT_SYNCED"` AND `_is_exportable_status(bill)` (bills have no `SYNC_READY` status) — true when `status_summary == "PAYMENT_COMPLETED"`, or `status_summary == "PAYMENT_PROCESSING"` and `payment.payment_method == "CHECK"`. Checks debit the bank when cut/mailed, well before Ramp flips the bill to `PAYMENT_COMPLETED` (which happens on clearing); ACH/wire in `PAYMENT_PROCESSING` is excluded since funds aren't committed yet.
 - Key field locations (confirmed from live data):
   - Vendor ID: `vendor.remote_id` → `vendor.remote_code` → `vendor.name`
   - Invoice number: `invoice_number` (always present — no generation needed)

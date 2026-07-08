@@ -183,7 +183,7 @@ Import into Sage 50 via: **File → Select Import/Export → General Ledger → 
 
 ### How it works
 
-1. Fetches all bills with `sync_status = NOT_SYNCED` and `status_summary = PAYMENT_COMPLETED`.
+1. Fetches all bills with `sync_status = NOT_SYNCED` that are either `status_summary = PAYMENT_COMPLETED`, or `status_summary = PAYMENT_PROCESSING` and paid by check — checks debit the bank once mailed, well before Ramp marks the bill fully completed (ACH/wire in `PAYMENT_PROCESSING` is excluded, since those funds aren't committed yet).
 2. Skips any bill missing a **Vendor ID**, **invoice number**, or **G/L Account** and logs a warning.
 3. Builds **two CSVs**:
    - **Purchases Journal** (`sage_bill_purchases_YYYYMMDD.csv`) — one row per line item, same 49-column format as card transactions. Invoice numbers come directly from Ramp (no auto-generation needed).
@@ -239,8 +239,11 @@ python billpay.py --dry-run --limit 1
 # Inspect raw API data for a specific vendor
 python billpay.py --dump-raw --vendor "Verizon"
 
-# Inspect already-synced bills
-python billpay.py --dump-raw --any-status
+# Inspect a vendor's bills in any sync/payment status — lists every match found
+python billpay.py --dump-raw --vendor "Verizon" --any-status
+
+# Inspect one specific bill by ID, bypassing all filters
+python billpay.py --dump-raw --bill-id ID
 
 # Mark specific IDs as synced without re-exporting (recovery)
 python billpay.py --mark-synced-ids ID1 ID2

@@ -1,9 +1,12 @@
 """
 Ramp API client for bill pay.
 
-Fetches bills with sync_status=NOT_SYNCED and status_summary=PAYMENT_COMPLETED,
-then expands each bill's line_items into Sage 50 vendor-invoice distribution rows
-(same structure as card transactions — reuses sage_formatter.build_csv directly).
+Fetches bills with sync_status=NOT_SYNCED and either status_summary=
+PAYMENT_COMPLETED, or status_summary=PAYMENT_PROCESSING when paid by check
+(funds leave the bank when a check is cut, well before Ramp marks it
+PAYMENT_COMPLETED — see _is_exportable_status()). Expands each bill's
+line_items into Sage 50 vendor-invoice distribution rows (same structure as
+card transactions — reuses sage_formatter.build_csv directly).
 
 Run  python billpay.py --dump-raw  to inspect raw JSON before going live.
 
@@ -130,6 +133,24 @@ def _effective_invoice_number(bill: dict, vendor_id: str) -> str:
         return raw
     suffix = bill["id"][-4:]
     return f"{raw[:15]}-{suffix}"[:20]
+
+
+def _is_exportable_status(bill: dict) -> bool:
+    """Whether this bill's status means the payment has actually left the bank.
+
+    PAYMENT_COMPLETED always qualifies. A check payment also qualifies while
+    still PAYMENT_PROCESSING — Ramp doesn't flip a bill to PAYMENT_COMPLETED
+    until the check clears, but the funds are debited (and the check mailed)
+    once the payment is initiated, well before that. ACH/wire payments in
+    PAYMENT_PROCESSING are excluded — funds aren't committed until completed.
+    """
+    status_summary = bill.get("status_summary")
+    if status_summary == "PAYMENT_COMPLETED":
+        return True
+    if status_summary == "PAYMENT_PROCESSING":
+        payment_method = ((bill.get("payment") or {}).get("payment_method") or "").upper()
+        return payment_method == "CHECK"
+    return False
 
 
 def _validate(bill: dict) -> list[str]:
@@ -290,7 +311,7 @@ def fetch_completed_bills(
         for bill in body.get("data", []):
             if bill.get("sync_status") != "NOT_SYNCED":
                 continue
-            if bill.get("status_summary") != "PAYMENT_COMPLETED":
+            if not _is_exportable_status(bill):
                 continue
             if bill["id"] in skip_ids:
                 continue
@@ -469,7 +490,7 @@ def dump_raw_bill(
         for bill in last_body.get("data", []):
             if not any_status and bill.get("sync_status") != "NOT_SYNCED":
                 continue
-            if not any_status and bill.get("status_summary") != "PAYMENT_COMPLETED":
+            if not any_status and not _is_exportable_status(bill):
                 continue
             if vendor:
                 name = ((bill.get("vendor") or {}).get("name") or "").lower()

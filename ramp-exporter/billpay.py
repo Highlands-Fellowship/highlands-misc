@@ -1,8 +1,10 @@
 """
 Ramp -> Sage 50 bill pay export.
 
-Fetches NOT_SYNCED + PAYMENT_COMPLETED bills and produces a Sage 50
-vendor-invoice CSV (same format as card transactions).
+Fetches NOT_SYNCED bills that are either PAYMENT_COMPLETED, or PAYMENT_PROCESSING
+and paid by check (funds already left the bank), and produces a Sage 50
+vendor-invoice CSV (same format as card transactions). See
+billpay_client._is_exportable_status() for the exact rule.
 
 Usage:
   python billpay.py                                  # normal run
