@@ -404,7 +404,7 @@ def fetch_bills_by_ids(
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
 
-def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None:
+def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> set[str]:
     """Mark a list of bill IDs as synced in Ramp (BILL_SYNC + BILL_PAYMENT_SYNC).
 
     A check bill exported while still PAYMENT_PROCESSING (see
@@ -412,16 +412,23 @@ def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None
     side — it rejects the whole batch with DEVELOPER_7062 ("not ready for
     sync") if even one bill isn't ready. When that happens, the offending IDs
     are parsed out of the error message and retried without them, so the rest
-    of the batch still gets confirmed. Deferred bills stay exported to Sage
-    but won't show as synced in Ramp until a later --mark-synced-ids run once
-    their check clears.
+    of the batch still gets confirmed.
+
+    Returns the set of bill IDs that could not be fully synced (deferred in
+    either phase) — these stay exported to Sage but won't show as synced in
+    Ramp until a later run, once their check clears. Callers should persist
+    this set (see billpay.py's pending_sync_ids.json / --reconcile) since a
+    deferred bill is never automatically retried once it's already in
+    exported_bill_ids.json — the normal fetch skips it regardless of Ramp's
+    sync_status.
     """
     import uuid
     log = logging.getLogger(__name__)
     token = _get_token(client_id, client_secret, write=True)
+    deferred: set[str] = set()
 
     for sync_type in ("BILL_SYNC", "BILL_PAYMENT_SYNC"):
-        pending = list(bill_ids)
+        pending = [b for b in bill_ids if b not in deferred]
         while pending:
             resp = requests.post(
                 RAMP_SYNCS_URL,
@@ -454,9 +461,10 @@ def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None
                 if not_ready:
                     log.warning(
                         "[%s] %d bill(s) not ready for sync yet — deferring until a "
-                        "later --mark-synced-ids run: %s",
+                        "later run: %s",
                         sync_type, len(not_ready), ", ".join(sorted(not_ready)),
                     )
+                    deferred |= not_ready
                     pending = [b for b in pending if b not in not_ready]
                     continue
                 if sync_type == "BILL_SYNC":
@@ -467,6 +475,8 @@ def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> None
                 f"Ramp sync API ({sync_type}) {resp.status_code}\n"
                 f"body: {resp.text}"
             )
+
+    return deferred
 
 
 def dump_raw_bill_by_id(client_id: str, client_secret: str, bill_id: str) -> dict | None:

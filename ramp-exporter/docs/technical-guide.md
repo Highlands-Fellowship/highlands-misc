@@ -254,6 +254,10 @@ python billpay.py --dry-run --reexport-ids ID1
 
 # Full run (state update + sync), but email only you instead of NOTIFY_EMAIL
 python billpay.py --mark-synced --to you@highlands.org
+
+# Retry sync for bills deferred by a prior run (e.g. checks that have since
+# cleared) — no re-export, no email
+python billpay.py --reconcile
 ```
 
 **Import order matters:**
@@ -364,6 +368,7 @@ Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variable
 | `exported_statement_ids.json` | State file for card statement IDs (auto-created) |
 | `exported_reimb_ids.json` | State file for reimbursement IDs (auto-created) |
 | `exported_bill_ids.json` | State file for bill IDs (auto-created) |
+| `pending_sync_ids.json` | Bills exported but not yet fully synced in Ramp — retry with `billpay.py --reconcile` (auto-created) |
 | `output\` | Generated CSVs (auto-created) |
 | `logs\` | Daily log files (auto-created) |
 

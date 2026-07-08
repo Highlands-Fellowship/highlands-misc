@@ -18,6 +18,7 @@ Usage:
   python billpay.py --mark-synced-ids ID1 ID2 ...    # mark specific IDs synced without re-exporting
   python billpay.py --mark-synced --to you@x.com     # full run, email only you instead of NOTIFY_EMAIL
   python billpay.py --reexport-ids ID1 ID2 ...       # re-export specific bill IDs regardless of sync status
+  python billpay.py --reconcile                      # retry sync for bills deferred by a prior run
 """
 
 import argparse
@@ -41,6 +42,7 @@ import email_template
 BASE_DIR = Path(__file__).parent
 _STATE_DIR = Path(os.getenv("STATE_DIR", BASE_DIR))
 STATE_FILE = _STATE_DIR / "exported_bill_ids.json"
+PENDING_SYNC_FILE = _STATE_DIR / "pending_sync_ids.json"
 LOG_FILE = BASE_DIR / "logs" / f"billpay_{date.today():%Y%m%d}.log"
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output"))
 
@@ -71,6 +73,30 @@ def _save_exported_ids(ids: set[str]) -> None:
     STATE_FILE.write_text(json.dumps(sorted(ids), indent=2))
 
 
+def _load_pending_sync_ids() -> set[str]:
+    if PENDING_SYNC_FILE.exists():
+        try:
+            return set(json.loads(PENDING_SYNC_FILE.read_text(encoding="utf-8")))
+        except Exception:
+            return set()
+    return set()
+
+
+def _save_pending_sync_ids(ids: set[str]) -> None:
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
+    PENDING_SYNC_FILE.write_text(json.dumps(sorted(ids), indent=2), encoding="utf-8")
+
+
+def _track_sync_result(attempted_ids, deferred_ids) -> None:
+    """After a mark_synced() call, update pending_sync_ids.json: bills that
+    were attempted but not deferred are now fully synced and get cleared;
+    newly deferred bills are added so --reconcile can retry them later."""
+    pending = _load_pending_sync_ids()
+    pending -= (set(attempted_ids) - set(deferred_ids))
+    pending |= set(deferred_ids)
+    _save_pending_sync_ids(pending)
+
+
 def _require_env(name: str) -> str:
     val = os.getenv(name)
     if not val:
@@ -91,6 +117,7 @@ def main() -> None:
     parser.add_argument("--mark-synced-ids", metavar="ID", nargs="+", help="mark specific bill IDs as synced (runs BILL_SYNC + BILL_PAYMENT_SYNC) without re-exporting")
     parser.add_argument("--reexport-ids", metavar="ID", nargs="+", help="re-export specific bill IDs regardless of state file or sync status")
     parser.add_argument("--to", metavar="EMAIL", help="override NOTIFY_EMAIL for this run only (e.g. to test a full run without emailing the full distribution list)")
+    parser.add_argument("--reconcile", action="store_true", help="retry syncing bills deferred by a prior run (see pending_sync_ids.json) — nothing is re-exported")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -99,9 +126,30 @@ def main() -> None:
     client_id = _require_env("RAMP_CLIENT_ID")
     client_secret = _require_env("RAMP_CLIENT_SECRET")
 
+    if args.reconcile:
+        pending = _load_pending_sync_ids()
+        if not pending:
+            log.info("Nothing to reconcile — no bills pending sync.")
+            return
+        log.info("Retrying sync for %d pending bill(s): %s", len(pending), ", ".join(sorted(pending)))
+        deferred = billpay_client.mark_synced(client_id, client_secret, list(pending))
+        _track_sync_result(pending, deferred)
+        resolved = pending - deferred
+        if resolved:
+            log.info("Resolved %d bill(s): %s", len(resolved), ", ".join(sorted(resolved)))
+        if deferred:
+            log.warning(
+                "%d bill(s) still not ready — still pending in pending_sync_ids.json: %s",
+                len(deferred), ", ".join(sorted(deferred)),
+            )
+        else:
+            log.info("All pending bills are now fully synced.")
+        return
+
     if args.mark_synced_ids:
         log.info("Marking %d bill(s) as synced in Ramp...", len(args.mark_synced_ids))
-        billpay_client.mark_synced(client_id, client_secret, args.mark_synced_ids)
+        deferred = billpay_client.mark_synced(client_id, client_secret, args.mark_synced_ids)
+        _track_sync_result(args.mark_synced_ids, deferred)
         return
 
     if args.reexport_ids:
@@ -300,7 +348,14 @@ def main() -> None:
             "Marking %d bill(s) as synced in Ramp: %s",
             len(bill_ids), ", ".join(sorted(bill_ids)),
         )
-        billpay_client.mark_synced(client_id, client_secret, bill_ids)
+        deferred = billpay_client.mark_synced(client_id, client_secret, bill_ids)
+        _track_sync_result(bill_ids, deferred)
+        if deferred:
+            log.warning(
+                "%d bill(s) not yet fully synced — tracked in pending_sync_ids.json, "
+                "retry later with --reconcile: %s",
+                len(deferred), ", ".join(sorted(deferred)),
+            )
 
 
 if __name__ == "__main__":
