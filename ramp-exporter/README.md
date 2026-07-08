@@ -246,6 +246,9 @@ python billpay.py --mark-synced-ids ID1 ID2
 # Re-export specific bill IDs regardless of sync status (e.g. to verify a
 # BILLPAY_DEDUPE_VENDORS change — a synced bill won't show up in a normal run)
 python billpay.py --dry-run --reexport-ids ID1
+
+# Full run (state update + sync), but email only you instead of NOTIFY_EMAIL
+python billpay.py --mark-synced --to you@highlands.org
 ```
 
 **Import order matters:**

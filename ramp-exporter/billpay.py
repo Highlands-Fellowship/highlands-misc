@@ -16,6 +16,7 @@ Usage:
   python billpay.py --date-from 2026-01-01           # pull from a specific date (ignores state)
   python billpay.py --limit 1                        # cap export at N bills (for test imports)
   python billpay.py --mark-synced-ids ID1 ID2 ...    # mark specific IDs synced without re-exporting
+  python billpay.py --mark-synced --to you@x.com     # full run, email only you instead of NOTIFY_EMAIL
   python billpay.py --reexport-ids ID1 ID2 ...       # re-export specific bill IDs regardless of sync status
 """
 
@@ -89,6 +90,7 @@ def main() -> None:
     parser.add_argument("--mark-synced", action="store_true", help="mark exported bills and payments as synced in Ramp after emailing")
     parser.add_argument("--mark-synced-ids", metavar="ID", nargs="+", help="mark specific bill IDs as synced (runs BILL_SYNC + BILL_PAYMENT_SYNC) without re-exporting")
     parser.add_argument("--reexport-ids", metavar="ID", nargs="+", help="re-export specific bill IDs regardless of state file or sync status")
+    parser.add_argument("--to", metavar="EMAIL", help="override NOTIFY_EMAIL for this run only (e.g. to test a full run without emailing the full distribution list)")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -105,7 +107,7 @@ def main() -> None:
     if args.reexport_ids:
         gmail_user = _require_env("GMAIL_USER")
         gmail_pass = _require_env("GMAIL_APP_PASSWORD")
-        notify_email = [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
+        notify_email = [args.to] if args.to else [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
 
         log.info("Re-fetching %d specific bill(s) by ID...", len(args.reexport_ids))
         purchase_rows, payment_rows, skipped = billpay_client.fetch_bills_by_ids(
@@ -208,7 +210,7 @@ def main() -> None:
 
     gmail_user = _require_env("GMAIL_USER")
     gmail_pass = _require_env("GMAIL_APP_PASSWORD")
-    notify_email = [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
+    notify_email = [args.to] if args.to else [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
 
     exported_ids = _load_exported_ids() if not args.date_from else set()
 
