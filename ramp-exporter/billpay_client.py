@@ -18,15 +18,14 @@ Key field locations (verify with --dump-raw against a live bill):
   - Amount:      line_items[].amount.amount / minor_unit_conversion_rate
   - Department:  accounting_field_selections[type=DEPARTMENT].external_id
 
-Some vendors reuse the same invoice number across unrelated bills, which Sage 50
-rejects as a duplicate reference on import. BILLPAY_DEDUPE_VENDORS (comma-separated
-vendor IDs) opts specific vendors into a uniquifying suffix on the invoice number —
-see _effective_invoice_number().
+Many bills have no real invoice number — Ramp falls back to the account number,
+which recurs every billing period and collides in Sage as a duplicate reference.
+Every invoice number gets a uniquifying suffix from the Ramp bill ID before
+reaching Sage — see _effective_invoice_number().
 """
 
 import datetime
 import logging
-import os
 import re
 import requests
 
@@ -116,22 +115,21 @@ def _line_item_amount(item: dict) -> float:
     return float(amt)
 
 
-def _dedupe_vendors() -> set[str]:
-    return {v.strip() for v in os.getenv("BILLPAY_DEDUPE_VENDORS", "").split(",") if v.strip()}
-
-
-def _effective_invoice_number(bill: dict, vendor_id: str) -> str:
+def _effective_invoice_number(bill: dict) -> str:
     """Invoice number to use on the Sage 50 rows.
 
-    For vendors listed in BILLPAY_DEDUPE_VENDORS, append a suffix derived from the
-    Ramp bill ID so bills that reuse the same invoice number don't collide in Sage.
-    Deterministic per bill ID, so the same bill always maps to the same value across
-    export runs. Must be used identically for both the Purchases and Payments Journal
-    rows of a given bill, since Sage matches payments to invoices by this string.
+    Many vendors have no real invoice number and Ramp falls back to the
+    account number instead — which recurs on every bill period, colliding in
+    Sage as a duplicate reference. So every bill gets a suffix derived from
+    its Ramp bill ID, not just flagged vendors (that vendor-by-vendor
+    allowlist proved too narrow — the same problem kept resurfacing on new
+    vendors). Deterministic per bill ID, so the same bill always maps to the
+    same value across export runs. Capped at Sage's 20-char field limit —
+    raw[:15] + "-" + 4-char suffix. Must be used identically for both the
+    Purchases and Payments Journal rows of a given bill, since Sage matches
+    payments to invoices by this exact string.
     """
     raw = (bill.get("invoice_number") or "").strip()
-    if vendor_id not in _dedupe_vendors():
-        return raw
     suffix = bill["id"][-4:]
     return f"{raw[:15]}-{suffix}"[:20]
 
@@ -213,7 +211,7 @@ def _expand_payment(bill: dict) -> dict:
         "payment_date": payment_date,
         "memo": memo,
         "amount": _bill_amount(bill),
-        "invoice_number": _effective_invoice_number(bill, vendor_id),
+        "invoice_number": _effective_invoice_number(bill),
         "payment_method": _payment_method(bill),
     }
 
@@ -245,7 +243,7 @@ def _group_payments(payment_rows: list[dict]) -> list[dict]:
 def _expand_bill(bill: dict) -> list[dict]:
     """Return one dict per line_item — same structure as card transaction rows."""
     vendor_id = _vendor_id(bill)
-    invoice = _effective_invoice_number(bill, vendor_id)
+    invoice = _effective_invoice_number(bill)
     raw_date = (
         bill.get("accounting_date")
         or bill.get("paid_at")
@@ -438,9 +436,8 @@ def fetch_bills_by_ids(
     """
     Fetch specific bills by ID and expand into Sage rows. Bypasses the
     NOT_SYNCED filter and the exported_bill_ids.json state file — for
-    re-exporting a bill that was already synced (e.g. to verify a config
-    change like BILLPAY_DEDUPE_VENDORS took effect, or to recover a bill
-    lost during import testing).
+    re-exporting a bill that was already synced, e.g. to recover a bill
+    lost during import testing.
     Returns (purchase_rows, payment_rows, skipped).
     """
     log = logging.getLogger(__name__)

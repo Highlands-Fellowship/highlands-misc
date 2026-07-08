@@ -219,7 +219,7 @@ Import into Sage 50 via: **File → Select Import/Export → General Ledger → 
 
 > **Multiple bills paid together:** if Ramp settles several bills to the same vendor in one ACH payment (e.g. a utility bill covering multiple meters), they share a `payment.id` and are combined into one multi-distribution Payments Journal entry — one row per bill, each showing its own amount, with the shared total and distribution count repeated on every row.
 
-> **Duplicate invoice numbers:** some vendors reuse the same invoice number across unrelated bills over time, which Sage 50 rejects as a duplicate reference on import. Add the vendor's ID to `BILLPAY_DEDUPE_VENDORS` in `.env` (comma-separated for multiple) to append a short unique suffix to that vendor's invoice numbers only — e.g. `AP-045771` becomes `AP-045771-3f2a`. The suffix is derived from the Ramp bill ID, so it's stable across re-runs and used identically on both the Purchases and Payments Journal rows for a bill. Vendors not listed are unaffected.
+> **Duplicate invoice numbers:** many bills have no real invoice number — Ramp falls back to the account number instead, which recurs every billing period and Sage rejects as a duplicate reference on a later import. Every invoice number gets a short unique suffix derived from the Ramp bill ID — e.g. `AP-045771` becomes `AP-045771-3f2a` — stable across re-runs and used identically on both the Purchases and Payments Journal rows for a bill.
 
 ### Running
 
@@ -248,8 +248,8 @@ python billpay.py --dump-raw --bill-id ID
 # Mark specific IDs as synced without re-exporting (recovery)
 python billpay.py --mark-synced-ids ID1 ID2
 
-# Re-export specific bill IDs regardless of sync status (e.g. to verify a
-# BILLPAY_DEDUPE_VENDORS change — a synced bill won't show up in a normal run)
+# Re-export specific bill IDs regardless of sync status (a synced bill won't
+# show up in a normal run)
 python billpay.py --dry-run --reexport-ids ID1
 
 # Full run (state update + sync), but email only you instead of NOTIFY_EMAIL
@@ -301,8 +301,6 @@ REIMBURSEMENT_CLEARING_ACCOUNT=2200    # ACH clearing account for reimbursements
 REIMBURSEMENT_BANK_ACCOUNT=1003-AB     # Bank account debited on reimbursement payment
 BILLPAY_CASH_ACCOUNT=1000-AB           # Bank account debited on bill payment
 BILLPAY_AP_ACCOUNT=2200                # AP clearing account for bill payments
-BILLPAY_DEDUPE_VENDORS=                # Comma-separated vendor IDs whose invoice numbers
-                                       # need a uniquifying suffix (see Bill Pay section)
 CARD_PAYMENT_CASH_ACCOUNT=1003-AB      # Bank account debited on card statement payment
 CARD_PAYMENT_AP_ACCOUNT=2104-AB        # AP account cleared by card statement payment
 CARD_PAYMENT_ENTITY_ID=                # Entity ID from balance_sections[0].entity_id in
