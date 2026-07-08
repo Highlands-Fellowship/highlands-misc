@@ -518,6 +518,17 @@ def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> set[
 
             if error_code == "DEVELOPER_7062":
                 not_ready = set(_UUID_RE.findall(message)) & set(pending)
+                if sync_type == "BILL_SYNC":
+                    # "Not ready" for BILL_SYNC means it's already done (BILL_SYNC
+                    # eligibility doesn't regress) — skip it here and let
+                    # BILL_PAYMENT_SYNC make the real ready/not-ready call.
+                    skip = not_ready or set(pending)
+                    log.info(
+                        "[BILL_SYNC] %d bill(s) already synced, skipping: %s",
+                        len(skip), ", ".join(sorted(skip)),
+                    )
+                    pending = [b for b in pending if b not in skip]
+                    continue
                 if not_ready:
                     log.warning(
                         "[%s] %d bill(s) not ready for sync yet — deferring until a "
@@ -527,9 +538,6 @@ def mark_synced(client_id: str, client_secret: str, bill_ids: list[str]) -> set[
                     deferred |= not_ready
                     pending = [b for b in pending if b not in not_ready]
                     continue
-                if sync_type == "BILL_SYNC":
-                    log.info("[%s] Bill(s) already synced, skipping.", sync_type)
-                    break
 
             raise RuntimeError(
                 f"Ramp sync API ({sync_type}) {resp.status_code}\n"
