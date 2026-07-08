@@ -146,8 +146,12 @@ def _expand_reimbursement(reimb: dict) -> list[dict]:
     employee_name = _clean_text(reimb.get("user_full_name") or "")
     memo = _clean_text(reimb.get("memo") or "")
 
-    # Expense rows use the original memo; payment rows use "Reimbursement - Name"
-    expense_desc = memo or employee_name or "Ramp Reimbursement"
+    # Expense rows: "Employee Name - memo", same pattern as card transactions
+    # (ramp_client.py) — the memo alone is often generic/unhelpful on its own.
+    if employee_name:
+        expense_desc = f"{employee_name} - {memo}" if memo else employee_name
+    else:
+        expense_desc = memo or "Ramp Reimbursement"
     payment_desc = f"Reimbursement - {employee_name}" if employee_name else "Ramp Reimbursement"
 
     raw_expense = (
