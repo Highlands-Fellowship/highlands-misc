@@ -336,6 +336,66 @@ def fetch_completed_bills(
     return _expand_bills(raw_bills)
 
 
+def find_unsynced_bills(
+    client_id: str,
+    client_secret: str,
+    from_date: str | None = None,
+) -> list[dict]:
+    """
+    Sweep bills directly from Ramp and return every one that meets our export
+    criteria (_is_exportable_status) but isn't fully synced yet
+    (sync_status != BILL_AND_PAYMENT_SYNCED).
+
+    Unlike fetch_completed_bills, this ignores exported_bill_ids.json and the
+    NOT_SYNCED-only filter — it finds bills stuck in any partial sync state
+    (e.g. BILL_SYNC succeeded but BILL_PAYMENT_SYNC didn't), including ones
+    from before pending_sync_ids.json existed to track them. Use this for an
+    occasional thorough audit; --reconcile's local pending list is the cheap
+    day-to-day check.
+    """
+    token = _get_token(client_id, client_secret)
+
+    params: dict = {"page_size": 100}
+    if from_date:
+        if len(from_date) == 10:
+            from_date = from_date + "T00:00:00Z"
+        params["from_date"] = from_date
+
+    found: list[dict] = []
+    next_cursor = None
+
+    while True:
+        if next_cursor:
+            if next_cursor.startswith("http"):
+                body = _get(token, {}, url=next_cursor)
+            else:
+                body = _get(token, {"page_size": 100, "start": next_cursor})
+        else:
+            body = _get(token, params)
+
+        for bill in body.get("data", []):
+            if bill.get("sync_status") == "BILL_AND_PAYMENT_SYNCED":
+                continue
+            if not _is_exportable_status(bill):
+                continue
+            found.append({
+                "id": bill["id"],
+                "vendor": (bill.get("vendor") or {}).get("name") or "unknown vendor",
+                "invoice_number": bill.get("invoice_number") or "",
+                "amount": _bill_amount(bill),
+                "status_summary": bill.get("status_summary"),
+                "sync_status": bill.get("sync_status"),
+            })
+
+        next_cursor = body.get("page", {}).get("next")
+        if not next_cursor:
+            break
+        params = {}
+
+    found.sort(key=lambda b: (b["vendor"], b["invoice_number"]))
+    return found
+
+
 def _expand_bills(raw_bills: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
     """Validate and expand a list of raw bill dicts into Sage rows.
 

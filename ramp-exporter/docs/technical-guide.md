@@ -259,6 +259,13 @@ python billpay.py --mark-synced --to you@highlands.org
 # cleared) — runs alongside the normal fetch, combine with --mark-synced
 # for the daily task (setup_task.ps1 does this by default)
 python billpay.py --mark-synced --reconcile
+
+# Audit: sweep Ramp directly for any bill that should be synced but isn't,
+# regardless of local state — lists findings and retries them
+python billpay.py --audit
+
+# Same, but only list what it finds (no retry)
+python billpay.py --audit --dry-run
 ```
 
 **Import order matters:**

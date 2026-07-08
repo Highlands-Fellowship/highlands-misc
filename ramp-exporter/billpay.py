@@ -19,6 +19,9 @@ Usage:
   python billpay.py --mark-synced --to you@x.com     # full run, email only you instead of NOTIFY_EMAIL
   python billpay.py --reexport-ids ID1 ID2 ...       # re-export specific bill IDs regardless of sync status
   python billpay.py --mark-synced --reconcile        # daily task: normal run + retry any previously deferred syncs
+  python billpay.py --audit                          # sweep Ramp for any bill not fully synced yet, then retry
+  python billpay.py --audit --dry-run                # same, but only list findings, no retry
+  python billpay.py --audit --date-from 2026-06-01   # limit the audit sweep to a date range
 """
 
 import argparse
@@ -143,6 +146,7 @@ def main() -> None:
     parser.add_argument("--reexport-ids", metavar="ID", nargs="+", help="re-export specific bill IDs regardless of state file or sync status")
     parser.add_argument("--to", metavar="EMAIL", help="override NOTIFY_EMAIL for this run only (e.g. to test a full run without emailing the full distribution list)")
     parser.add_argument("--reconcile", action="store_true", help="also retry syncing bills deferred by a prior run (see pending_sync_ids.json) — runs alongside the normal fetch, e.g. combine with --mark-synced for the daily task")
+    parser.add_argument("--audit", action="store_true", help="sweep Ramp directly for any bill that should be synced but isn't (ignores local state); combine with --date-from to limit the range")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -155,6 +159,27 @@ def main() -> None:
         log.info("Marking %d bill(s) as synced in Ramp...", len(args.mark_synced_ids))
         deferred = billpay_client.mark_synced(client_id, client_secret, args.mark_synced_ids)
         _track_sync_result(args.mark_synced_ids, deferred)
+        return
+
+    if args.audit:
+        log.info("Auditing Ramp for bills that should be synced but aren't...")
+        found = billpay_client.find_unsynced_bills(client_id, client_secret, from_date=args.date_from)
+        if not found:
+            log.info("Audit: nothing found -- everything eligible is already fully synced.")
+            return
+        for b in found:
+            log.info(
+                "  %s  %-30s  %-25s  $%10.2f  status_summary=%s sync_status=%s",
+                b["id"], b["vendor"][:30], b["invoice_number"][:25], b["amount"],
+                b["status_summary"], b["sync_status"],
+            )
+        pending = _load_pending_sync_ids() | {b["id"] for b in found}
+        log.info("Audit: found %d bill(s) not fully synced.", len(found))
+        if args.dry_run:
+            log.info("[dry-run] Skipping pending_sync_ids.json update and retry.")
+            return
+        _save_pending_sync_ids(pending)
+        _reconcile(client_id, client_secret, log)
         return
 
     if args.reexport_ids:
