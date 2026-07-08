@@ -256,8 +256,9 @@ python billpay.py --dry-run --reexport-ids ID1
 python billpay.py --mark-synced --to you@highlands.org
 
 # Retry sync for bills deferred by a prior run (e.g. checks that have since
-# cleared) — no re-export, no email
-python billpay.py --reconcile
+# cleared) — runs alongside the normal fetch, combine with --mark-synced
+# for the daily task (setup_task.ps1 does this by default)
+python billpay.py --mark-synced --reconcile
 ```
 
 **Import order matters:**
@@ -339,7 +340,7 @@ Run once from an elevated PowerShell prompt to register Task Scheduler jobs:
 
 Valid task names: `Card`, `CardPayment`, `Reimb`, `Bill`
 
-Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variables before running. Card transactions, reimbursements, and bill payments run with `--mark-synced`. Card payments (`$CARD_PMT_HOUR`, default 10 AM) require no `--mark-synced` flag — statements have no sync status in Ramp.
+Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variables before running. Card transactions, reimbursements, and bill payments run with `--mark-synced` — bill payments also add `--reconcile` to retry any check payments deferred by a prior run. Card payments (`$CARD_PMT_HOUR`, default 10 AM) require no `--mark-synced` flag — statements have no sync status in Ramp.
 
 ---
 

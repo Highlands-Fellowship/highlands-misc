@@ -18,7 +18,7 @@ Usage:
   python billpay.py --mark-synced-ids ID1 ID2 ...    # mark specific IDs synced without re-exporting
   python billpay.py --mark-synced --to you@x.com     # full run, email only you instead of NOTIFY_EMAIL
   python billpay.py --reexport-ids ID1 ID2 ...       # re-export specific bill IDs regardless of sync status
-  python billpay.py --reconcile                      # retry sync for bills deferred by a prior run
+  python billpay.py --mark-synced --reconcile        # daily task: normal run + retry any previously deferred syncs
 """
 
 import argparse
@@ -104,6 +104,31 @@ def _require_env(name: str) -> str:
     return val
 
 
+def _reconcile(client_id: str, client_secret: str, log: logging.Logger, dry_run: bool = False) -> None:
+    """Retry sync for bills a prior run deferred (e.g. checks that have since
+    cleared). No re-export, no email — just the Ramp sync confirmation call."""
+    pending = _load_pending_sync_ids()
+    if not pending:
+        log.info("Reconcile: nothing pending.")
+        return
+    if dry_run:
+        log.info("Reconcile: [dry-run] would retry sync for %d pending bill(s): %s", len(pending), ", ".join(sorted(pending)))
+        return
+    log.info("Reconcile: retrying sync for %d pending bill(s): %s", len(pending), ", ".join(sorted(pending)))
+    deferred = billpay_client.mark_synced(client_id, client_secret, list(pending))
+    _track_sync_result(pending, deferred)
+    resolved = pending - deferred
+    if resolved:
+        log.info("Reconcile: resolved %d bill(s): %s", len(resolved), ", ".join(sorted(resolved)))
+    if deferred:
+        log.warning(
+            "Reconcile: %d bill(s) still not ready — still pending: %s",
+            len(deferred), ", ".join(sorted(deferred)),
+        )
+    else:
+        log.info("Reconcile: all pending bills are now fully synced.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
@@ -117,7 +142,7 @@ def main() -> None:
     parser.add_argument("--mark-synced-ids", metavar="ID", nargs="+", help="mark specific bill IDs as synced (runs BILL_SYNC + BILL_PAYMENT_SYNC) without re-exporting")
     parser.add_argument("--reexport-ids", metavar="ID", nargs="+", help="re-export specific bill IDs regardless of state file or sync status")
     parser.add_argument("--to", metavar="EMAIL", help="override NOTIFY_EMAIL for this run only (e.g. to test a full run without emailing the full distribution list)")
-    parser.add_argument("--reconcile", action="store_true", help="retry syncing bills deferred by a prior run (see pending_sync_ids.json) — nothing is re-exported")
+    parser.add_argument("--reconcile", action="store_true", help="also retry syncing bills deferred by a prior run (see pending_sync_ids.json) — runs alongside the normal fetch, e.g. combine with --mark-synced for the daily task")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -125,26 +150,6 @@ def main() -> None:
 
     client_id = _require_env("RAMP_CLIENT_ID")
     client_secret = _require_env("RAMP_CLIENT_SECRET")
-
-    if args.reconcile:
-        pending = _load_pending_sync_ids()
-        if not pending:
-            log.info("Nothing to reconcile — no bills pending sync.")
-            return
-        log.info("Retrying sync for %d pending bill(s): %s", len(pending), ", ".join(sorted(pending)))
-        deferred = billpay_client.mark_synced(client_id, client_secret, list(pending))
-        _track_sync_result(pending, deferred)
-        resolved = pending - deferred
-        if resolved:
-            log.info("Resolved %d bill(s): %s", len(resolved), ", ".join(sorted(resolved)))
-        if deferred:
-            log.warning(
-                "%d bill(s) still not ready — still pending in pending_sync_ids.json: %s",
-                len(deferred), ", ".join(sorted(deferred)),
-            )
-        else:
-            log.info("All pending bills are now fully synced.")
-        return
 
     if args.mark_synced_ids:
         log.info("Marking %d bill(s) as synced in Ramp...", len(args.mark_synced_ids))
@@ -275,6 +280,8 @@ def main() -> None:
 
     if not purchase_rows:
         log.info("Nothing to do -- no new completed bills.")
+        if args.reconcile:
+            _reconcile(client_id, client_secret, log, dry_run=args.dry_run)
         return
 
     unique_bills = len({row["id"] for row in purchase_rows})
@@ -356,6 +363,9 @@ def main() -> None:
                 "retry later with --reconcile: %s",
                 len(deferred), ", ".join(sorted(deferred)),
             )
+
+    if args.reconcile:
+        _reconcile(client_id, client_secret, log)
 
 
 if __name__ == "__main__":

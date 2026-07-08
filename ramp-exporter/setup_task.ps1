@@ -99,7 +99,7 @@ if ("Reimb" -in $Tasks) {
 if ("Bill" -in $Tasks) {
     $action  = New-ScheduledTaskAction `
         -Execute $PYTHON_EXE `
-        -Argument "$SCRIPT_DIR\billpay.py --mark-synced" `
+        -Argument "$SCRIPT_DIR\billpay.py --mark-synced --reconcile" `
         -WorkingDirectory $SCRIPT_DIR
     $trigger = New-ScheduledTaskTrigger -Daily -At "${BILL_HOUR}:00"
     Register-ScheduledTask `

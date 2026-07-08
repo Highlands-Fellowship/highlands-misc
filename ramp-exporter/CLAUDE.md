@@ -39,8 +39,9 @@ python main.py --mark-synced-ids ID1 ID2
 python reimburse.py --mark-synced-ids ID1
 python billpay.py --mark-synced-ids ID1
 
-# Recovery: retry sync for bills deferred by a prior run (e.g. checks that have since cleared)
-python billpay.py --reconcile
+# Retry sync for bills deferred by a prior run (e.g. checks that have since
+# cleared) — combine with the normal run, e.g. for the daily scheduled task:
+python billpay.py --mark-synced --reconcile
 
 # Re-export: rebuild CSVs for specific bill IDs regardless of sync status
 python billpay.py --reexport-ids ID1 ID2
@@ -135,7 +136,7 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 - Both CSVs emailed together as attachments; import Purchases first, then Payments
 - **Duplicate invoice numbers:** some vendors reuse the same `invoice_number` across unrelated bills, which Sage 50 rejects on import. `BILLPAY_DEDUPE_VENDORS` (comma-separated vendor IDs) opts specific vendors into `_effective_invoice_number()` — appends a suffix from the last 4 chars of the Ramp bill ID (`{invoice[:15]}-{id[-4:]}`, truncated to 20 chars). Deterministic per bill ID (stable across re-runs); computed once and shared between the purchase row (`invoice`) and payment row (`invoice_number`) for the same bill, since Sage matches payments to invoices by that exact string. Vendors not listed keep their raw Ramp invoice number unchanged.
 - **`mark_synced` partial-batch handling:** since a still-`PAYMENT_PROCESSING` check bill can be exported to Sage (see above), Ramp's `BILL_PAYMENT_SYNC` may reject the whole batch with `DEVELOPER_7062` ("not ready for sync") if any bill in it isn't fully complete yet. `mark_synced()` parses the offending IDs out of the error message (`error_v2.message`, extracted via UUID regex), retries the batch without them, and returns the set of bill IDs that ended up deferred. Deferred bills stay exported to Sage but never resurface through the normal fetch — `exported_bill_ids.json`'s skip-list excludes them regardless of Ramp's `sync_status`, so nothing retries them automatically.
-- **`pending_sync_ids.json` + `--reconcile`:** `billpay.py` persists every `mark_synced()` call's deferred set here via `_track_sync_result()` (bills that synced fully get cleared, newly deferred ones get added). `--reconcile` retries sync for everything currently pending — no re-export, no email — and updates the tracker with the outcome. Run periodically (or after the fact) to catch up any check payments that have since cleared.
+- **`pending_sync_ids.json` + `--reconcile`:** `billpay.py` persists every `mark_synced()` call's deferred set here via `_track_sync_result()` (bills that synced fully get cleared, newly deferred ones get added). `--reconcile` retries sync for everything currently pending and updates the tracker with the outcome — no re-export, no email involved for the pending bills themselves. It's additive, not exclusive: it runs alongside the normal fetch (after "nothing to do", or after the main `--mark-synced` block), so `setup_task.ps1`'s daily Bill task runs `billpay.py --mark-synced --reconcile` to catch up any check payments that have since cleared in the same run.
 - State file: `exported_bill_ids.json`
 
 ### Shared modules
