@@ -73,10 +73,11 @@ def build_csv(rows: list[dict]) -> str:
             gl = bank
 
         amount_str = f"{float(row['amount']):.2f}"
+        # Sage 50 General Journal Reference field limit: 20 characters.
         reference = (
-            "Ramp Reimbursement PYMT"
+            "Ramp Reimb - Pymt"
             if role in ("payment_debit", "payment_credit")
-            else "Ramp Reimbursement EXP"
+            else "Ramp Reimb - Exp"
         )
 
         writer.writerow([

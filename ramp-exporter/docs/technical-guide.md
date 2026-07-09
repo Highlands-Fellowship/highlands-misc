@@ -142,7 +142,7 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 |---|---|
 | Date (expense rows) | `accounting_date` (falls back to `transaction_date`) |
 | Date (payment rows) | `payment_processed_at` |
-| Reference | `Ramp Reimbursement EXP` / `Ramp Reimbursement PYMT` |
+| Reference | `Ramp Reimb - Exp` / `Ramp Reimb - Pymt` (kept short — Sage's General Journal Reference field is limited to 20 characters) |
 | Description | `user_full_name - memo` (e.g. `Melissa Mcfarlane - Hotel stay`) |
 | G/L Account (expense debit) | `line_items[].accounting_field_selections[category_info.type=GL_ACCOUNT].external_code` |
 | G/L Account (expense credit) | `REIMBURSEMENT_CLEARING_ACCOUNT` env var (default `2200`) |
