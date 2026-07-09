@@ -126,28 +126,23 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 
 1. Fetches all reimbursements with `sync_status = SYNC_READY`.
 2. Skips any reimbursement missing a **G/L Account** and logs a warning.
-3. Builds a Sage 50 **General Journal** CSV with **four rows per reimbursement** (two journal entries):
-   - **Expense entry** (dated `accounting_date`):
-     - Debit: expense G/L account for each line item amount
-     - Credit: ACH clearing account (`REIMBURSEMENT_CLEARING_ACCOUNT`, default `2200`)
-   - **Payment entry** (dated `payment_processed_at`):
-     - Debit: ACH clearing account (`REIMBURSEMENT_CLEARING_ACCOUNT`, default `2200`)
-     - Credit: bank/cash account (`REIMBURSEMENT_BANK_ACCOUNT`, default `1003-AB`)
+3. Builds a Sage 50 **General Journal** CSV with **one journal entry per reimbursement** (n+1 rows for n line items), dated `payment_processed_at`:
+   - Debit: expense G/L account for each line item amount
+   - Credit: bank/cash account (`REIMBURSEMENT_BANK_ACCOUNT`, default `1003-AB`)
 4. Emails the CSV via branded HTML email.
 5. Records exported IDs in `exported_reimb_ids.json`.
+
+> **Why one entry, not two:** an earlier version posted each reimbursement as two entries (an expense entry dated `accounting_date`, a payment entry dated `payment_processed_at`, netting through a `2200` clearing account) to keep expense recognition and cash movement on separate dates. In practice those two dates were usually only 1-2 days apart, so per a CFO decision this was simplified to a single entry — no clearing account to maintain or reconcile.
 
 ### Field mapping
 
 | Sage 50 GJ column | Source |
 |---|---|
-| Date (expense rows) | `accounting_date` (falls back to `transaction_date`) |
-| Date (payment rows) | `payment_processed_at` |
-| Reference | `Ramp Reimb - Exp` / `Ramp Reimb - Pymt` (kept short — Sage's General Journal Reference field is limited to 20 characters) |
+| Date | `payment_processed_at` (falls back to `accounting_date`, `transaction_date`) |
+| Reference | `Ramp Reimbursement` (fixed, 18 chars — Sage's General Journal Reference field is limited to 20 characters) |
 | Description | `user_full_name - memo` (e.g. `Melissa Mcfarlane - Hotel stay`) |
-| G/L Account (expense debit) | `line_items[].accounting_field_selections[type=GL_ACCOUNT].external_code` |
-| G/L Account (expense credit) | `REIMBURSEMENT_CLEARING_ACCOUNT` env var (default `2200`) |
-| G/L Account (payment debit) | `REIMBURSEMENT_CLEARING_ACCOUNT` env var (default `2200`) |
-| G/L Account (payment credit) | `REIMBURSEMENT_BANK_ACCOUNT` env var (default `1003-AB`) |
+| G/L Account (debit) | `line_items[].accounting_field_selections[type=GL_ACCOUNT].external_code` |
+| G/L Account (credit) | `REIMBURSEMENT_BANK_ACCOUNT` env var (default `1003-AB`) |
 | Amount | Positive = debit, negative = credit (single Amount column) |
 
 ### Running
@@ -297,8 +292,7 @@ NOTIFY_EMAIL=...                       # Who receives the CSVs (comma-separated 
 Optional overrides (defaults shown):
 
 ```
-REIMBURSEMENT_CLEARING_ACCOUNT=2200    # ACH clearing account for reimbursements
-REIMBURSEMENT_BANK_ACCOUNT=1003-AB     # Bank account debited on reimbursement payment
+REIMBURSEMENT_BANK_ACCOUNT=1003-AB     # Bank account credited on reimbursement
 BILLPAY_CASH_ACCOUNT=1000-AB           # Bank account debited on bill payment
 BILLPAY_AP_ACCOUNT=2200                # AP clearing account for bill payments
 CARD_PAYMENT_CASH_ACCOUNT=1003-AB      # Bank account debited on card statement payment

@@ -54,7 +54,7 @@ python billpay.py --reexport-ids ID1 ID2
 
 ## Required `.env` file
 
-Copy `.env.example` to `.env`. Required keys: `RAMP_CLIENT_ID`, `RAMP_CLIENT_SECRET`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `NOTIFY_EMAIL`. Optional: `OUTPUT_DIR`, `REIMBURSEMENT_CLEARING_ACCOUNT` (default `2200`), `REIMBURSEMENT_BANK_ACCOUNT` (default `1003-AB`), `BILLPAY_CASH_ACCOUNT` (default `1000-AB`), `BILLPAY_AP_ACCOUNT` (default `2200`), `CARD_PAYMENT_CASH_ACCOUNT` (default `1003-AB`), `CARD_PAYMENT_AP_ACCOUNT` (default `2104-AB`).
+Copy `.env.example` to `.env`. Required keys: `RAMP_CLIENT_ID`, `RAMP_CLIENT_SECRET`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `NOTIFY_EMAIL`. Optional: `OUTPUT_DIR`, `REIMBURSEMENT_BANK_ACCOUNT` (default `1003-AB`), `BILLPAY_CASH_ACCOUNT` (default `1000-AB`), `BILLPAY_AP_ACCOUNT` (default `2200`), `CARD_PAYMENT_CASH_ACCOUNT` (default `1003-AB`), `CARD_PAYMENT_AP_ACCOUNT` (default `2104-AB`).
 
 ## One-time setup: Ramp accounting connection
 
@@ -112,14 +112,12 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 - Key field locations (confirmed from live data):
   - Employee name: `user_full_name` (top-level string — `employee.first_name/last_name` are `None`)
   - GL Account: `line_items[].accounting_field_selections[type="GL_ACCOUNT"].external_code` — `type` appears at the top level of the selection dict (confirmed via `--dump-raw`); it's also duplicated under `category_info.type`, but the code only needs the top-level one
-  - Expense date: `accounting_date` → `transaction_date` → `created_at`
-  - Payment date: `payment_processed_at`
-- **4 rows per reimbursement** (two journal entries, `row_role` field drives account substitution):
-  - `expense_debit` — expense GL, positive amount, dated `accounting_date`
-  - `expense_credit` — clearing account (`REIMBURSEMENT_CLEARING_ACCOUNT`), negative, dated `accounting_date`
-  - `payment_debit` — clearing account, positive, dated `payment_processed_at`
-  - `payment_credit` — bank account (`REIMBURSEMENT_BANK_ACCOUNT`), negative, dated `payment_processed_at`
-- 14-column General Journal CSV: single `Amount` column (positive=debit, negative=credit)
+  - Payment date: `payment_processed_at` → `accounting_date` → `transaction_date` → `created_at`
+- **Single journal entry per reimbursement** (n+1 rows for n line items), dated `payment_processed_at`:
+  - `debit` — one row per line item, expense GL account, positive amount
+  - `credit` — one row, bank account (`REIMBURSEMENT_BANK_ACCOUNT`), negative amount (`gl_account=None`, filled by the formatter)
+  - No clearing account, no separate expense-date entry — a prior two-entry/clearing-account design (accrual-style, expense dated separately from payment) was replaced with this simpler single-entry model per CFO decision, since expense and payment dates were typically only 1-2 days apart in practice
+- 14-column General Journal CSV: single `Amount` column (positive=debit, negative=credit); `Reference` fixed to `"Ramp Reimbursement"` (18 chars, fits Sage's 20-char limit)
 - State file: `exported_reimb_ids.json`
 
 ### Bill pay (`billpay_client.py` → `sage_formatter.py` + `billpay_payment_formatter.py`)

@@ -1,23 +1,22 @@
 """
 Ramp API client for reimbursements.
 
-Each SYNC_READY reimbursement expands into 4 rows (or n+3 rows for multi-split):
+Each SYNC_READY reimbursement expands into a single journal entry, dated
+payment_processed_at (n+1 rows for n line_items):
 
-  Expense entry (date = accounting_date):
-    Row 1..n  — debit each expense G/L account (one per line_item)
-    Row n+1   — credit ACH clearing account (total amount, negative)
+  Row 1..n  — debit each expense G/L account (one per line_item)
+  Row n+1   — credit bank/cash account (total amount, negative)
 
-  Payment entry (date = payment_processed_at):
-    Row n+2   — debit ACH clearing account (total amount, positive)
-    Row n+3   — credit bank/cash account (total amount, negative)
+No separate expense-date entry or clearing account — approved by CFO in
+favor of the simpler single-entry model (see git history for the prior
+two-entry/clearing-account design and the trade-offs discussed).
 
 Run  python reimburse.py --dump-raw  to inspect raw JSON before going live.
 
 Key field locations (confirmed from live API):
   - GL Account:    line_items[].accounting_field_selections[type=GL_ACCOUNT].external_code
   - Amount:        line_items[].amount.amount / minor_unit_conversion_rate
-  - Expense date:  accounting_date (fallback: transaction_date)
-  - Payment date:  payment_processed_at (fallback: expense date)
+  - Payment date:  payment_processed_at (fallback: accounting_date, transaction_date)
   - Employee:      user_full_name
 """
 
@@ -133,86 +132,59 @@ def _validate(reimb: dict) -> list[str]:
 
 def _expand_reimbursement(reimb: dict) -> list[dict]:
     """
-    Return 4 rows per reimbursement (or n+3 rows for n expense line items):
-      - n debit rows   (expense GL accounts, expense date)
-      - 1 credit row   (ACH clearing,        expense date)
-      - 1 debit row    (ACH clearing,        payment date)
-      - 1 credit row   (bank account,        payment date)
+    Return one journal entry per reimbursement (n+1 rows for n line items),
+    dated payment_processed_at:
+      - n debit rows  (expense GL accounts, one per line_item)
+      - 1 credit row  (bank account)
 
-    gl_account is None for clearing and bank rows — the formatter
-    substitutes env-configured account codes at write time.
+    gl_account is None on the credit row — the formatter substitutes the
+    env-configured bank account code at write time.
     """
     reimb_id = reimb["id"]
     employee_name = _clean_text(reimb.get("user_full_name") or "")
     memo = _clean_text(reimb.get("memo") or "")
 
-    # Expense rows: "Employee Name - memo", same pattern as card transactions
-    # (ramp_client.py) — the memo alone is often generic/unhelpful on its own.
+    # "Employee Name - memo", same pattern as card transactions (ramp_client.py)
+    # — the memo alone is often generic/unhelpful on its own.
     if employee_name:
-        expense_desc = f"{employee_name} - {memo}" if memo else employee_name
+        description = f"{employee_name} - {memo}" if memo else employee_name
     else:
-        expense_desc = memo or "Ramp Reimbursement"
-    payment_desc = f"Reimbursement - {employee_name}" if employee_name else "Ramp Reimbursement"
+        description = memo or "Ramp Reimbursement"
 
-    raw_expense = (
-        reimb.get("accounting_date")
+    raw_date = (
+        reimb.get("payment_processed_at")
+        or reimb.get("accounting_date")
         or reimb.get("transaction_date")
         or reimb.get("created_at")
         or ""
     )
-    expense_date = _format_date(raw_expense)
-    payment_date = _format_date(reimb.get("payment_processed_at") or raw_expense)
+    date_str = _format_date(raw_date)
 
     line_items = reimb.get("line_items") or []
     total_amount = sum(_line_item_amount(item) for item in line_items)
-
-    # Number of distributions for each journal entry
-    expense_num_dist = len(line_items) + 1  # n expense debits + 1 clearing credit
-    payment_num_dist = 2                    # 1 clearing debit + 1 bank credit
+    num_dist = len(line_items) + 1  # n expense debits + 1 bank credit
 
     rows = []
 
-    # --- Expense entry ---
     for item in line_items:
         rows.append({
             "id": reimb_id,
-            "date": expense_date,
-            "description": expense_desc,
+            "date": date_str,
+            "description": description,
             "gl_account": _gl_account(item),
             "amount": _line_item_amount(item),
-            "num_distributions": expense_num_dist,
-            "row_role": "expense_debit",
+            "num_distributions": num_dist,
+            "row_role": "debit",
         })
 
     rows.append({
         "id": reimb_id,
-        "date": expense_date,
-        "description": expense_desc,
-        "gl_account": None,          # ACH clearing — filled by formatter
-        "amount": -total_amount,
-        "num_distributions": expense_num_dist,
-        "row_role": "expense_credit",
-    })
-
-    # --- Payment entry ---
-    rows.append({
-        "id": reimb_id,
-        "date": payment_date,
-        "description": payment_desc,
-        "gl_account": None,          # ACH clearing — filled by formatter
-        "amount": total_amount,
-        "num_distributions": payment_num_dist,
-        "row_role": "payment_debit",
-    })
-
-    rows.append({
-        "id": reimb_id,
-        "date": payment_date,
-        "description": payment_desc,
+        "date": date_str,
+        "description": description,
         "gl_account": None,          # Bank account — filled by formatter
         "amount": -total_amount,
-        "num_distributions": payment_num_dist,
-        "row_role": "payment_credit",
+        "num_distributions": num_dist,
+        "row_role": "credit",
     })
 
     return rows

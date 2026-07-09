@@ -7,24 +7,19 @@ Column order matches the working import template exactly:
   Transaction Period, Transaction Number, Consolidated Transaction,
   Recur Number, Recur Frequency
 
-Each reimbursement produces 4 rows (or n+3 for n expense line items):
-  Expense entry (accounting_date):
-    - Debit  expense G/L account(s)    positive amount
-    - Credit ACH clearing account      negative amount
-  Payment entry (payment_processed_at):
-    - Debit  ACH clearing account      positive amount
-    - Credit bank/cash account         negative amount
+Each reimbursement produces one journal entry (n+1 rows for n line items),
+dated payment_processed_at:
+  - Debit  expense G/L account(s)    positive amount
+  - Credit bank/cash account         negative amount
 
-Account codes are read from env vars:
-  REIMBURSEMENT_CLEARING_ACCOUNT  (default 2200)
-  REIMBURSEMENT_BANK_ACCOUNT      (default 1003-AB)
+Bank account code is read from an env var:
+  REIMBURSEMENT_BANK_ACCOUNT  (default 1003-AB)
 """
 
 import csv
 import io
 import os
 
-_DEFAULT_CLEARING_ACCOUNT = "2200"
 _DEFAULT_BANK_ACCOUNT = "1003-AB"
 
 _COLUMNS = [
@@ -52,10 +47,9 @@ def build_csv(rows: list[dict]) -> str:
     Each row dict must have:
       id, date, description, gl_account (or None), amount, num_distributions, row_role.
 
-    row_role is one of: expense_debit, expense_credit, payment_debit, payment_credit.
-    gl_account=None rows have their account filled from env vars.
+    row_role is one of: debit, credit. gl_account=None on the credit row —
+    filled from the env-configured bank account.
     """
-    clearing = os.getenv("REIMBURSEMENT_CLEARING_ACCOUNT", _DEFAULT_CLEARING_ACCOUNT)
     bank = os.getenv("REIMBURSEMENT_BANK_ACCOUNT", _DEFAULT_BANK_ACCOUNT)
 
     buf = io.StringIO()
@@ -63,38 +57,24 @@ def build_csv(rows: list[dict]) -> str:
     writer.writerow(_COLUMNS)
 
     for row in rows:
-        role = row["row_role"]
-
-        if row["gl_account"] is not None:
-            gl = row["gl_account"]
-        elif role in ("expense_credit", "payment_debit"):
-            gl = clearing
-        else:
-            gl = bank
-
+        gl = row["gl_account"] if row["gl_account"] is not None else bank
         amount_str = f"{float(row['amount']):.2f}"
-        # Sage 50 General Journal Reference field limit: 20 characters.
-        reference = (
-            "Ramp Reimb - Pymt"
-            if role in ("payment_debit", "payment_credit")
-            else "Ramp Reimb - Exp"
-        )
 
         writer.writerow([
             row["date"],
-            reference,
-            "",                          # Date Clear in Bank Rec
+            "Ramp Reimbursement",        # Reference (Sage 20-char field limit; 19 chars)
+            "",                           # Date Clear in Bank Rec
             row["num_distributions"],
             gl,
             row["description"],
             amount_str,
-            "",                          # Job ID
-            "False",                     # Used for Reimbursable Expenses
-            "",                          # Transaction Period
-            "",                          # Transaction Number
-            "False",                     # Consolidated Transaction
-            "0",                         # Recur Number
-            "0",                         # Recur Frequency
+            "",                           # Job ID
+            "False",                      # Used for Reimbursable Expenses
+            "",                           # Transaction Period
+            "",                           # Transaction Number
+            "False",                      # Consolidated Transaction
+            "0",                          # Recur Number
+            "0",                          # Recur Frequency
         ])
 
     return buf.getvalue()
