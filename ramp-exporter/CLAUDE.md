@@ -111,7 +111,7 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 - Filters: `sync_status == "SYNC_READY"` on `GET /developer/v1/reimbursements`
 - Key field locations (confirmed from live data):
   - Employee name: `user_full_name` (top-level string — `employee.first_name/last_name` are `None`)
-  - GL Account: `line_items[].accounting_field_selections[category_info.type="GL_ACCOUNT"].external_code` (type is under `category_info`, not at top level)
+  - GL Account: `line_items[].accounting_field_selections[type="GL_ACCOUNT"].external_code` — `type` appears at the top level of the selection dict (confirmed via `--dump-raw`); it's also duplicated under `category_info.type`, but the code only needs the top-level one
   - Expense date: `accounting_date` → `transaction_date` → `created_at`
   - Payment date: `payment_processed_at`
 - **4 rows per reimbursement** (two journal entries, `row_role` field drives account substitution):
