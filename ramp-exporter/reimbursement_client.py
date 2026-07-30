@@ -84,12 +84,22 @@ def _get(token: str, params: dict, url: str = RAMP_REIMBURSEMENTS_URL) -> dict:
 
 
 def _clean_text(s: str) -> str:
-    """Replace newlines and carriage returns with a space.
+    """Sanitize text for a Sage 50 CSV field.
 
-    Sage 50's CSV importer does not handle embedded newlines in quoted fields —
-    it treats them as record separators and fails with a Date parse error.
+    - Newlines become spaces: Sage 50's importer treats an embedded newline
+      as a record separator and fails with a Date parse error.
+    - Literal double-quote characters are stripped: Sage 50's importer
+      appears to mishandle the doubled-quote ("") escaping CSV requires to
+      preserve them, corrupting field alignment on the row.
+    - Capped at 250 chars: some memos paste in an entire multi-paragraph
+      quote/spec sheet, which doesn't belong in a one-line accounting
+      description regardless of the quote issue.
     """
-    return s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
+    cleaned = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace('"', "")
+    cleaned = " ".join(cleaned.split())
+    if len(cleaned) > 250:
+        cleaned = cleaned[:247] + "..."
+    return cleaned
 
 
 def _format_date(raw: str) -> str:
