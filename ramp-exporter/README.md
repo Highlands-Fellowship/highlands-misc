@@ -198,7 +198,7 @@ Import into Sage 50 via: **File → Select Import/Export → General Ledger → 
 | Sage 50 column | Source |
 |---|---|
 | Vendor ID | `vendor.remote_id` |
-| Check Number | `payment.customer_friendly_payment_id` |
+| Check Number | `payment.customer_friendly_payment_id` (check/ACH); for card payments, which leave this blank, a synthetic 10-char reference built from the card transaction ID instead |
 | Date | `payment.payment_date` (falls back to `payment.effective_date`, `paid_at`) |
 | Cash Account | `BILLPAY_CASH_ACCOUNT` env var (default `1000-AB`) |
 | Invoice Paid | `invoice_number` (see note below on duplicate invoice numbers) |

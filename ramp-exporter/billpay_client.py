@@ -194,6 +194,24 @@ def _bill_amount(bill: dict) -> float:
     return float(amt_obj)
 
 
+def _check_number(payment: dict, bill_id: str) -> str:
+    """Reference number for the Payments Journal Check Number field.
+
+    Check/ACH payments (Ramp's VendorPaymentDetailsSchema) populate
+    customer_friendly_payment_id directly. Card payments (CardPaymentDetailsSchema)
+    leave it None — Ramp doesn't generate a check-style reference for those at
+    all — so fall back to a synthetic one built from the underlying card
+    transaction ID. Every customer_friendly_payment_id observed from Ramp is
+    exactly 10 characters, so the fallback matches that length for consistency.
+    """
+    friendly_id = (payment.get("customer_friendly_payment_id") or "").strip()
+    if friendly_id:
+        return friendly_id
+    txn_ids = (payment.get("details") or {}).get("transaction_ids") or []
+    source_id = txn_ids[0] if txn_ids else (payment.get("id") or bill_id)
+    return source_id.replace("-", "")[-10:].upper()
+
+
 def _expand_payment(bill: dict) -> dict:
     """Return one payment row dict for this bill's own invoice.
 
@@ -220,7 +238,7 @@ def _expand_payment(bill: dict) -> dict:
         "payment_id": (payment.get("id") or "").strip(),
         "vendor_id": vendor_id,
         "vendor_name": (vendor.get("name") or vendor.get("remote_name") or "").strip(),
-        "check_number": (payment.get("customer_friendly_payment_id") or "").strip(),
+        "check_number": _check_number(payment, bill["id"]),
         "payment_date": payment_date,
         "memo": memo,
         "amount": _bill_amount(bill),
