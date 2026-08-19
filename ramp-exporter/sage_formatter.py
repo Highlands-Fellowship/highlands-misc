@@ -61,6 +61,8 @@ SAGE_HEADERS = [
     "Accounting Department",
 ]
 
+_DEFAULT_AP_ACCOUNT = "2104-AB"
+
 _FIXED = {
     "Credit Memo": "FALSE",
     "Drop Ship": "FALSE",
@@ -71,7 +73,6 @@ _FIXED = {
     "Ship to State": "VA",
     "Ship to Zipcode": "24212",
     "Discount Amount": "0",
-    "Accounts Payable Account": "2104-AB",
     "Note Prints After Line Items": "FALSE",
     "Beginning Balance Transaction": "FALSE",
     "Applied To Purchase Order": "FALSE",
@@ -86,8 +87,14 @@ _FIXED = {
 }
 
 
-def build_csv(rows: list[dict]) -> str:
-    """Return the Sage 50 vendor-invoice CSV as a string."""
+def build_csv(rows: list[dict], ap_account: str = _DEFAULT_AP_ACCOUNT) -> str:
+    """Return the Sage 50 vendor-invoice CSV as a string.
+
+    ap_account must match whatever AP account the corresponding Payments
+    Journal clears against (e.g. BILLPAY_AP_ACCOUNT for bill pay) — Sage
+    can't match the payment to the invoice otherwise. Defaults to 2104-AB,
+    the card transactions' AP account, for backward compatibility.
+    """
     if not rows:
         raise ValueError("No rows to format")
 
@@ -97,6 +104,7 @@ def build_csv(rows: list[dict]) -> str:
 
     for row in rows:
         record = dict(_FIXED)
+        record["Accounts Payable Account"] = ap_account
         record["Vendor ID"] = row["vendor_id"]
         record["Invoice/CM #"] = row["invoice"]
         record["Date"] = row["date"]

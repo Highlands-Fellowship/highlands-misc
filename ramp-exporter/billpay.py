@@ -200,7 +200,9 @@ def main() -> None:
         unique_bills = len({row["id"] for row in purchase_rows})
         today = date.today()
 
-        purchase_csv = sage_formatter.build_csv(purchase_rows)
+        purchase_csv = sage_formatter.build_csv(
+            purchase_rows, ap_account=os.getenv("BILLPAY_AP_ACCOUNT", "2200")
+        )
         purchase_filename = f"sage_bill_purchases_reexport_{today:%Y%m%d}.csv"
         purchase_path = OUTPUT_DIR / purchase_filename
         with open(purchase_path, "w", newline="", encoding="utf-8") as f:
@@ -330,7 +332,9 @@ def main() -> None:
 
     today = date.today()
 
-    purchase_csv = sage_formatter.build_csv(purchase_rows)
+    purchase_csv = sage_formatter.build_csv(
+        purchase_rows, ap_account=os.getenv("BILLPAY_AP_ACCOUNT", "2200")
+    )
     purchase_filename = f"sage_bill_purchases_{today:%Y%m%d}.csv"
     purchase_path = OUTPUT_DIR / purchase_filename
     with open(purchase_path, "w", newline="", encoding="utf-8") as f:

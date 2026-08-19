@@ -197,6 +197,7 @@ Import into Sage 50 via: **File → Select Import/Export → General Ledger → 
 | Amount | `line_items[].amount.amount / minor_unit_conversion_rate` |
 | Accounting Department | `accounting_field_selections[type=DEPARTMENT].external_id` |
 | Number of Distributions | Count of line items on the bill |
+| Accounts Payable Account | `BILLPAY_AP_ACCOUNT` env var (default `2200`) — must match the Payments Journal's AP clearing account below, or Sage can't clear the invoice |
 
 ### Field mapping — Payments Journal
 

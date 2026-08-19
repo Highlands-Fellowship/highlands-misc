@@ -146,7 +146,7 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 
 ### Shared modules
 
-**`sage_formatter.py`** — 49-column Sage 50 vendor-invoice CSV. `_FIXED` dict holds Highlands Fellowship constants (ship-to address, AP account `2104-AB`, etc.). No grouping logic — distributions pre-computed by client modules.
+**`sage_formatter.py`** — 49-column Sage 50 vendor-invoice CSV. `_FIXED` dict holds Highlands Fellowship constants (ship-to address, terms, etc.). `build_csv(rows, ap_account=...)` — `Accounts Payable Account` defaults to `2104-AB` (card transactions, `main.py`), but `billpay.py` overrides it with `BILLPAY_AP_ACCOUNT` so the Purchases Journal always matches the AP account the Payments Journal clears against — a prior mismatch here (Purchases fixed at `2104-AB`, Payments env-configurable and set to `2200`) meant Sage couldn't clear bill pay invoices. No grouping logic — distributions pre-computed by client modules.
 
 **`emailer.py`** — `send_csv(gmail_user, gmail_app_password, to_address, subject, body_plain, csv_data, filename, body_html=None, extra_attachments=None)`. Sends `multipart/mixed` with `multipart/alternative` inner part (plain + HTML) plus one or more CSV attachments. `extra_attachments` is a list of `(csv_data, filename)` tuples.
 
