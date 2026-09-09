@@ -290,6 +290,11 @@ def _expand_bill(bill: dict) -> list[dict]:
         or ""
     )
     date_str = _format_date(raw_date)
+    # Date Due / Discount Date: the bill's actual due date, independent of
+    # when it was entered — this is AP aging/scheduling metadata only and
+    # doesn't affect which period the GL entry (and income statement) posts
+    # to, so it's safe for it to land in a later period than "date" above.
+    due_date_str = _format_date(bill.get("due_at") or "") or date_str
     memo = _clean_text(bill.get("memo") or bill.get("vendor_memo") or "")
     department = _department(bill)
     line_items = bill.get("line_items") or []
@@ -302,6 +307,7 @@ def _expand_bill(bill: dict) -> list[dict]:
             "vendor_id": vendor_id,
             "invoice": invoice,
             "date": date_str,
+            "due_date": due_date_str,
             "memo": item_memo or memo,
             "gl_account": _gl_account(item),
             "department": department,

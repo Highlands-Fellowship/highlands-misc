@@ -4,6 +4,9 @@ Build a Sage 50 vendor-invoice CSV from rows produced by ramp_client.
 Each row is one line-item (one Sage distribution).  num_distributions and
 dist_number are pre-computed by ramp_client from the transaction's line_items
 array, so no grouping logic is needed here.
+
+row["due_date"] is optional — Date Due/Discount Date fall back to row["date"]
+when absent (e.g. card transactions, which don't track a separate due date).
 """
 
 import csv
@@ -108,8 +111,9 @@ def build_csv(rows: list[dict], ap_account: str = _DEFAULT_AP_ACCOUNT) -> str:
         record["Vendor ID"] = row["vendor_id"]
         record["Invoice/CM #"] = row["invoice"]
         record["Date"] = row["date"]
-        record["Date Due"] = row["date"]
-        record["Discount Date"] = row["date"]
+        due_date = row.get("due_date") or row["date"]
+        record["Date Due"] = due_date
+        record["Discount Date"] = due_date
         record["Number of Distributions"] = str(row["num_distributions"])
         record["Invoice/CM Distribution"] = str(row["dist_number"])
         record["Description"] = row["memo"]
