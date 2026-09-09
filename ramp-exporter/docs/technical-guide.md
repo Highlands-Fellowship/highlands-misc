@@ -192,7 +192,7 @@ Import into Sage 50 via: **File → Select Import/Export → General Ledger → 
 |---|---|
 | Vendor ID | `vendor.remote_id` (falls back to `remote_code`, then `vendor.name`) |
 | Invoice/CM # | `invoice_number` (from Ramp — present on all bills) |
-| Date | `payment.payment_date` (falls back to `payment.effective_date`, `paid_at`, `accounting_date`, `issued_at`) — the date funds actually left the bank, same priority as the Payments Journal, so both journals land the expense in the same income statement period |
+| Date | `created_at` (falls back to `draft_bill_created_at`, `issued_at`, `accounting_date`) — the date the bill was received and entered into Ramp, per accrual accounting: the expense and AP liability are recognized when the bill is entered, not when it's later paid (see the Payments Journal's Date below for that) |
 | G/L Account | `line_items[].accounting_field_selections[category_info.type=GL_ACCOUNT].external_code` |
 | Amount | `line_items[].amount.amount / minor_unit_conversion_rate` |
 | Accounting Department | `accounting_field_selections[type=DEPARTMENT].external_id` |

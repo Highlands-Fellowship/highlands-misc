@@ -275,17 +275,18 @@ def _expand_bill(bill: dict) -> list[dict]:
     """Return one dict per line_item — same structure as card transaction rows."""
     vendor_id = _vendor_id(bill)
     invoice = _effective_invoice_number(bill)
-    payment = bill.get("payment") or {}
-    # Same priority as _expand_payment(): the date funds actually left the
-    # bank, not accounting_date (which can differ by days/weeks and land the
-    # expense in the wrong income statement period). accounting_date/issued_at
-    # are defensive fallbacks only, for the unlikely case payment info is missing.
+    # Accrual accounting per CFO guidance: the Purchase (expense debit + AP
+    # liability credit) is dated when the bill was received and entered into
+    # Ramp, NOT when it's later paid — created_at is the closest match to
+    # that. This is deliberately different from _expand_payment()'s date,
+    # which correctly uses payment.payment_date (the actual bank debit) to
+    # clear the AP liability later. accounting_date/issued_at are defensive
+    # fallbacks only, for the unlikely case created_at is missing.
     raw_date = (
-        payment.get("payment_date")
-        or payment.get("effective_date")
-        or bill.get("paid_at")
-        or bill.get("accounting_date")
+        bill.get("created_at")
+        or bill.get("draft_bill_created_at")
         or bill.get("issued_at")
+        or bill.get("accounting_date")
         or ""
     )
     date_str = _format_date(raw_date)
