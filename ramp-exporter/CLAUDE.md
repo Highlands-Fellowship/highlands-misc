@@ -128,9 +128,8 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
   - Invoice number: `invoice_number` (always present — no generation needed)
   - GL Account: `line_items[].accounting_field_selections` — check BOTH `sel.get("type")` and `sel.get("category_info", {}).get("type")` for `"GL_ACCOUNT"` (bills may store it under either)
   - Department: top-level `accounting_field_selections[type="DEPARTMENT"].external_id`
-  - Date: `accounting_date` → `paid_at` → `issued_at`
+  - Date (both Purchases and Payments Journal rows): `payment.payment_date` → `payment.effective_date` → `paid_at` → `accounting_date` → `issued_at`. Purchases rows used to date on `accounting_date` alone, which can land days-to-weeks before the actual bank debit and misstate which income statement period the expense hits — both `_expand_bill()` and `_expand_payment()` now share this same priority so the two journals always agree.
   - Payment check number: `payment.customer_friendly_payment_id` — only populated for check/ACH payments (`VendorPaymentDetailsSchema`). Card payments (`CardPaymentDetailsSchema`) leave it `None`; `_check_number()` falls back to a synthetic 10-char reference from `payment.details.transaction_ids[0]` (last 10 chars, hyphens stripped, uppercased) so Sage still gets a short, unique-per-payment value instead of a blank field.
-  - Payment date: `payment.payment_date` → `payment.effective_date` → `paid_at`
 - `fetch_completed_bills` returns a 3-tuple `(purchase_rows, payment_rows, skipped)`; both it and `fetch_bills_by_ids` (used by `--reexport-ids`) share the validate/expand loop via `_expand_bills()`
 - `fetch_bills_by_ids` fetches specific bills directly by ID (`GET /bills/{id}`), bypassing the `NOT_SYNCED` filter and `exported_bill_ids.json` — use it to rebuild CSVs for a bill that's already synced, since a synced bill no longer shows up in a normal fetch
 - Purchase rows reuse `sage_formatter.build_csv()` (same 49-column format as card transactions)

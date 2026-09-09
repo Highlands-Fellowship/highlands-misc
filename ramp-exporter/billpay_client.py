@@ -275,9 +275,16 @@ def _expand_bill(bill: dict) -> list[dict]:
     """Return one dict per line_item — same structure as card transaction rows."""
     vendor_id = _vendor_id(bill)
     invoice = _effective_invoice_number(bill)
+    payment = bill.get("payment") or {}
+    # Same priority as _expand_payment(): the date funds actually left the
+    # bank, not accounting_date (which can differ by days/weeks and land the
+    # expense in the wrong income statement period). accounting_date/issued_at
+    # are defensive fallbacks only, for the unlikely case payment info is missing.
     raw_date = (
-        bill.get("accounting_date")
+        payment.get("payment_date")
+        or payment.get("effective_date")
         or bill.get("paid_at")
+        or bill.get("accounting_date")
         or bill.get("issued_at")
         or ""
     )
