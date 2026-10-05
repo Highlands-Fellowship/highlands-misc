@@ -22,6 +22,7 @@ Usage:
   python billpay.py --audit                          # sweep Ramp for any bill not fully synced yet, then retry
   python billpay.py --audit --dry-run                # same, but only list findings, no retry
   python billpay.py --audit --date-from 2026-06-01   # limit the audit sweep to a date range
+  python billpay.py --check-vendor-ids               # preview Vendor IDs if export switched to Ramp's External ID
 """
 
 import argparse
@@ -132,6 +133,38 @@ def _reconcile(client_id: str, client_secret: str, log: logging.Logger, dry_run:
         log.info("Reconcile: all pending bills are now fully synced.")
 
 
+def _print_vendor_id_check(r: dict) -> None:
+    active = r["total"] - r["inactive"]
+    print(f"=== Vendor ID check: {active} active vendor(s) ({r['inactive']} inactive skipped) ===")
+    print("Current = what the export sends today (linked accounting vendor ID)")
+    print("New     = what it would send if it used Ramp's External ID field first\n")
+
+    print(f"WILL CHANGE ({len(r['will_change'])}) -- External ID set and different from current value")
+    print("  Verify each New value matches a Sage 50 Vendor ID exactly before switching.")
+    if r["will_change"]:
+        print(f"  {'Ramp name':<36} {'Current':<36} New")
+        for row in r["will_change"]:
+            print(f"  {row['name'][:36]:<36} {row['current'][:36]:<36} {row['proposed']}")
+    else:
+        print("  (none)")
+
+    print(f"\nTOO LONG FOR SAGE ({len(r['too_long'])}) -- would export more than 20 chars after the switch")
+    if r["too_long"]:
+        print(f"  {'Ramp name':<36} {'Len':>4}  Value")
+        for row in r["too_long"]:
+            print(f"  {row['name'][:36]:<36} {len(row['value']):>4}  {row['value']}")
+    else:
+        print("  (none)")
+
+    print(f"\nNO ID AT ALL ({len(r['no_id'])}) -- both blank; export falls back to the display name")
+    for row in r["no_id"]:
+        print(f"  {row['name']}")
+    if not r["no_id"]:
+        print("  (none)")
+
+    print(f"\nUnchanged by the switch: {r['unchanged']} vendor(s)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
@@ -147,6 +180,7 @@ def main() -> None:
     parser.add_argument("--to", metavar="EMAIL", help="override NOTIFY_EMAIL for this run only (e.g. to test a full run without emailing the full distribution list)")
     parser.add_argument("--reconcile", action="store_true", help="also retry syncing bills deferred by a prior run (see pending_sync_ids.json) — runs alongside the normal fetch, e.g. combine with --mark-synced for the daily task")
     parser.add_argument("--audit", action="store_true", help="sweep Ramp directly for any bill that should be synced but isn't (ignores local state); combine with --date-from to limit the range")
+    parser.add_argument("--check-vendor-ids", action="store_true", help="read-only: list vendors whose exported Vendor ID would change if the export used Ramp's External ID field, or that exceed Sage's 20-char limit (needs vendors:read scope)")
     args = parser.parse_args()
 
     _setup_logging(args.dry_run)
@@ -159,6 +193,10 @@ def main() -> None:
         log.info("Marking %d bill(s) as synced in Ramp...", len(args.mark_synced_ids))
         deferred = billpay_client.mark_synced(client_id, client_secret, args.mark_synced_ids)
         _track_sync_result(args.mark_synced_ids, deferred)
+        return
+
+    if args.check_vendor_ids:
+        _print_vendor_id_check(billpay_client.check_vendor_ids(client_id, client_secret))
         return
 
     if args.audit:

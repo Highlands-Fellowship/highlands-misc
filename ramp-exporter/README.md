@@ -258,6 +258,11 @@ python billpay.py --audit
 
 # Same, but only list what it finds (no retry)
 python billpay.py --audit --dry-run
+
+# Vendor ID check (read-only): list vendors whose exported Vendor ID would
+# change if the export used Ramp's External ID field, plus any over Sage's
+# 20-char limit or with no ID at all. Needs the vendors:read scope.
+python billpay.py --check-vendor-ids
 ```
 
 **Import order matters:**
@@ -299,7 +304,7 @@ CARD_PAYMENT_ENTITY_ID=                # Entity ID from balance_sections[0].enti
                                        # --dump-raw output — filters out Subscription statements
 ```
 
-**Ramp API setup:** Go to Ramp Settings → Developers → Create an API app with the `transactions:read`, `reimbursements:read`, `bills:read`, and `statements:read` scopes. Copy the client ID and secret into `.env`.
+**Ramp API setup:** Go to Ramp Settings → Developers → Create an API app with the `transactions:read`, `reimbursements:read`, `bills:read`, and `statements:read` scopes (plus `vendors:read` for `billpay.py --check-vendor-ids`). Copy the client ID and secret into `.env`.
 
 **Gmail App Password:** Google Account → Security → 2-Step Verification → App passwords.
 
@@ -374,6 +379,6 @@ Any transaction missing required fields is skipped and logged — it will not ap
 | `missing Vendor ID` | Open the transaction → set the **Accounting Vendor** field |
 | `line item N missing G/L Account` | Open the transaction → set the **Category/GL Account** for that split |
 | `missing G/L Account` (reimbursement) | Open the reimbursement → set the **Category/GL Account** |
-| `missing Vendor ID` (bill) | Open the bill → set the vendor's **Remote ID** in Ramp settings |
+| `missing Vendor ID` (bill) | Open the bill → set the vendor's **Remote ID** in Ramp settings. Note: the vendor's **External ID** in the Ramp GUI is a *different* field and is not what the export uses — run `--check-vendor-ids` to compare them |
 | `missing invoice number` (bill) | Open the bill → add an invoice number |
 | `line item N missing G/L Account` (bill) | Open the bill → set the **GL Account** for that line item |

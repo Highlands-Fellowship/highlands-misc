@@ -48,6 +48,9 @@ python billpay.py --mark-synced --reconcile
 # pending_sync_ids.json, or just periodic peace of mind
 python billpay.py --audit
 
+# Vendor ID check (read-only, needs vendors:read scope)
+python billpay.py --check-vendor-ids
+
 # Re-export: rebuild CSVs for specific bill IDs regardless of sync status
 python billpay.py --reexport-ids ID1 ID2
 ```
@@ -124,7 +127,7 @@ This calls `POST /developer/v1/accounting/connection` with `{"remote_provider_na
 
 - Filters: `sync_status == "NOT_SYNCED"` AND `_is_exportable_status(bill)` (bills have no `SYNC_READY` status) — true when `status_summary == "PAYMENT_COMPLETED"`, or `status_summary == "PAYMENT_PROCESSING"` and `payment.payment_method == "CHECK"`. Checks debit the bank when cut/mailed, well before Ramp flips the bill to `PAYMENT_COMPLETED` (which happens on clearing); ACH/wire in `PAYMENT_PROCESSING` is excluded since funds aren't committed yet.
 - Key field locations (confirmed from live data):
-  - Vendor ID: `vendor.remote_id` → `vendor.remote_code` → `vendor.name`
+  - Vendor ID: `vendor.remote_id` → `vendor.remote_code` → `vendor.name`. Ramp keeps **two** vendor IDs that don't sync with each other: `accounting_vendor_remote_id` (the linked Sage-side vendor — surfaced on bills as `vendor.remote_id`, what the export uses) and `external_vendor_id` (the "External ID" editable in the Ramp GUI — only visible via `GET /vendors/{id}`, not on the bill). Editing External ID in the GUI does **not** change the export (seen with Morrison Home & Land Improvements, whose auto-created accounting link used the full 33-char name, over Sage's 20-char limit). `--check-vendor-ids` (`billpay_client.check_vendor_ids()`, needs `vendors:read`) previews switching the export to `external_vendor_id` first — read-only; the switch itself hasn't been made.
   - Invoice number: `invoice_number` (always present — no generation needed)
   - GL Account: `line_items[].accounting_field_selections` — check BOTH `sel.get("type")` and `sel.get("category_info", {}).get("type")` for `"GL_ACCOUNT"` (bills may store it under either)
   - Department: top-level `accounting_field_selections[type="DEPARTMENT"].external_id`

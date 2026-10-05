@@ -662,3 +662,77 @@ def dump_raw_bill(
         )
     )
     return candidates[0], candidates
+
+
+RAMP_VENDORS_URL = "https://api.ramp.com/developer/v1/vendors"
+SAGE_VENDOR_ID_MAX = 20
+
+
+def check_vendor_ids(client_id: str, client_secret: str) -> dict:
+    """Preview of switching bill pay's Vendor ID source to the Ramp GUI's
+    External ID field. Read-only — changes nothing.
+
+    Ramp keeps two vendor IDs: external_vendor_id (the "External ID" edited
+    in the Ramp GUI) and accounting_vendor_remote_id (the linked Sage-side
+    vendor, surfaced on bills as vendor.remote_id — what the export uses
+    today). Editing one doesn't update the other, so this lists every active
+    vendor where switching would change the exported value, plus vendors
+    whose exported value wouldn't fit Sage's 20-char Vendor ID either way.
+
+    Needs the vendors:read scope on the Ramp API app.
+    """
+    resp = requests.post(
+        RAMP_TOKEN_URL,
+        auth=(client_id, client_secret),
+        data={"grant_type": "client_credentials", "scope": "vendors:read"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    vendors: list[dict] = []
+    url, params = RAMP_VENDORS_URL, {"page_size": 100}
+    while url:
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        if not resp.ok:
+            raise RuntimeError(
+                f"Ramp API {resp.status_code} on GET /vendors\n"
+                f"url:  {resp.url}\n"
+                f"body: {resp.text}"
+            )
+        body = resp.json()
+        vendors.extend(body.get("data", []))
+        next_page = (body.get("page") or {}).get("next")
+        if next_page and next_page.startswith("http"):
+            url, params = next_page, None
+        elif next_page:
+            url, params = RAMP_VENDORS_URL, {"page_size": 100, "start": next_page}
+        else:
+            url = None
+
+    result = {
+        "total": len(vendors), "inactive": 0, "unchanged": 0,
+        "will_change": [], "too_long": [], "no_id": [],
+    }
+    for v in vendors:
+        if not v.get("is_active", True):
+            result["inactive"] += 1
+            continue
+        name = (v.get("name") or "").strip()
+        external = (v.get("external_vendor_id") or "").strip()
+        remote = (v.get("accounting_vendor_remote_id") or "").strip()
+        current = remote or name           # mirrors _vendor_id() on a bill today
+        proposed = external or current     # after switching to External ID first
+
+        if not external and not remote:
+            result["no_id"].append({"name": name})
+        if proposed != current:
+            result["will_change"].append({"name": name, "current": current, "proposed": proposed})
+        else:
+            result["unchanged"] += 1
+        if len(proposed) > SAGE_VENDOR_ID_MAX:
+            result["too_long"].append({"name": name, "value": proposed})
+
+    for key in ("will_change", "too_long", "no_id"):
+        result[key].sort(key=lambda r: r["name"].lower())
+    return result
