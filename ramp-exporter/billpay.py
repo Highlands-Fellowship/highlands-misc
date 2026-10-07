@@ -23,6 +23,8 @@ Usage:
   python billpay.py --audit --dry-run                # same, but only list findings, no retry
   python billpay.py --audit --date-from 2026-06-01   # limit the audit sweep to a date range
   python billpay.py --check-vendor-ids               # preview Vendor IDs if export switched to Ramp's External ID
+  python billpay.py --check-payments                 # only run the payment-changed-after-export check
+  python billpay.py --check-payments --dry-run       # same, but report only (no email, no state update)
 """
 
 import argparse
@@ -47,6 +49,7 @@ BASE_DIR = Path(__file__).parent
 _STATE_DIR = Path(os.getenv("STATE_DIR", BASE_DIR))
 STATE_FILE = _STATE_DIR / "exported_bill_ids.json"
 PENDING_SYNC_FILE = _STATE_DIR / "pending_sync_ids.json"
+PAYMENT_STATE_FILE = _STATE_DIR / "exported_bill_payments.json"
 LOG_FILE = BASE_DIR / "logs" / f"billpay_{date.today():%Y%m%d}.log"
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output"))
 
@@ -99,6 +102,159 @@ def _track_sync_result(attempted_ids, deferred_ids) -> None:
     pending -= (set(attempted_ids) - set(deferred_ids))
     pending |= set(deferred_ids)
     _save_pending_sync_ids(pending)
+
+
+def _load_exported_payments() -> dict[str, dict]:
+    """bill ID -> the payment Sage has for it: {payment_id, ref, date}, plus
+    "alerted": true once we've emailed that it was cancelled, until a
+    completed replacement comes through."""
+    if PAYMENT_STATE_FILE.exists():
+        try:
+            return json.loads(PAYMENT_STATE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_exported_payments(tracked: dict[str, dict]) -> None:
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
+    PAYMENT_STATE_FILE.write_text(json.dumps(tracked, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _record_exported_payments(payment_rows: list[dict]) -> None:
+    """Remember which Ramp payment was just sent to Sage for each bill, so a
+    later run can tell if Ramp cancels or replaces it."""
+    tracked = _load_exported_payments()
+    for row in payment_rows:
+        tracked[row["id"]] = {
+            "payment_id": row["payment_id"],
+            "ref": row["check_number"],
+            "date": row["payment_date"],
+        }
+    _save_exported_payments(tracked)
+
+
+def _check_payment_changes(
+    client_id: str,
+    client_secret: str,
+    log: logging.Logger,
+    dry_run: bool,
+    gmail_user: str,
+    gmail_pass: str,
+    notify_email: list[str],
+) -> None:
+    """Email an alert when a bill already exported to Sage has its Ramp
+    payment cancelled, reversed, or replaced afterward.
+
+    Ramp keeps such a bill marked synced, so the normal fetch never sees it
+    again — e.g. a check exported in July, cancelled and reversed in
+    September, then re-paid by ACH: Sage kept the voided check and never got
+    the ACH. Two kinds of alert, each sent once:
+      - cancelled: the payment Sage has is no longer active and nothing has
+        replaced it yet -> void it in Sage.
+      - replaced: a different payment has now left the bank -> void the
+        original (if not already) and import the attached Payments CSV.
+
+    Bills exported before this tracking existed are seeded with their current
+    Ramp payment on first sight (no alert) — changes that happened before
+    that can't be detected.
+    """
+    exported_ids = _load_exported_ids()
+    tracked = _load_exported_payments()
+    bills = {b["id"]: b for b in billpay_client.fetch_all_bills(client_id, client_secret)}
+
+    seeded = 0
+    for bill_id in exported_ids - tracked.keys():
+        if bill_id in bills:
+            snap = billpay_client.payment_snapshot(bills[bill_id])
+            tracked[bill_id] = {"payment_id": snap["payment_id"], "ref": snap["ref"], "date": snap["date"]}
+            seeded += 1
+    if seeded:
+        log.info("Payment check: started tracking %d previously exported bill(s).", seeded)
+
+    replaced: list[tuple[dict, dict, dict]] = []
+    cancelled: list[tuple[dict, dict, dict]] = []
+    for bill_id, entry in tracked.items():
+        bill = bills.get(bill_id)
+        if bill is None:
+            continue
+        snap = billpay_client.payment_snapshot(bill)
+        if snap["payment_id"] == entry["payment_id"]:
+            continue
+        if snap["payment_id"]:
+            replaced.append((bill, entry, snap))
+        elif not entry.get("alerted"):
+            cancelled.append((bill, entry, snap))
+
+    if not replaced and not cancelled:
+        log.info("Payment check: no exported bill payments have changed.")
+        if seeded and not dry_run:
+            _save_exported_payments(tracked)
+        return
+
+    items = []
+    for bill, entry, snap in replaced + cancelled:
+        info = billpay_client.bill_summary(bill)
+        in_sage = f"In Sage: payment {entry['ref'] or '(reference not tracked)'} dated {entry['date'] or '?'}"
+        if snap["payment_id"]:
+            now = f"Ramp now: replaced by payment {snap['ref']} dated {snap['date']} -- in the attached CSV"
+        else:
+            now = (
+                f"Ramp now: no completed payment (status {snap['status'] or 'unknown'}) -- "
+                "void the Sage payment; a replacement will be emailed once it completes"
+            )
+        log.warning(
+            "Payment changed after export: %s  %s  invoice %s  $%.2f -- %s; %s",
+            bill["id"], info["vendor"], info["invoice"], info["amount"], in_sage, now,
+        )
+        items.append({
+            "date": entry["date"],
+            "merchant": f"{info['vendor']} -- invoice {info['invoice']} (${info['amount']:,.2f})",
+            "reasons": [in_sage, now],
+            "ramp_url": f"https://app.ramp.com/bill-pay/bills/list/{bill['id']}",
+        })
+
+    today = date.today()
+    attachments = []
+    if replaced:
+        payment_csv = billpay_payment_formatter.build_csv(
+            billpay_client.build_payment_rows([bill for bill, _, _ in replaced])
+        )
+        payment_filename = f"sage_bill_payments_changed_{today:%Y%m%d}.csv"
+        payment_path = OUTPUT_DIR / payment_filename
+        with open(payment_path, "w", newline="", encoding="utf-8") as f:
+            f.write(payment_csv)
+        log.info("Replacement Payments CSV written to %s", payment_path)
+        attachments.append((payment_csv, payment_filename))
+
+    if dry_run:
+        log.info("[dry-run] Payment check: skipping alert email and state update.")
+        return
+
+    count = len(replaced) + len(cancelled)
+    html_body, plain_body = email_template.build_billpay_payment_changed_email(
+        count=count,
+        gen_date=f"{today:%Y-%m-%d}",
+        items=items,
+        has_csv=bool(replaced),
+    )
+    emailer.send_csv(
+        gmail_user=gmail_user,
+        gmail_app_password=gmail_pass,
+        to_address=notify_email,
+        subject=f"Ramp Bill Payments Changed After Export -- {count} bill(s) ({today:%B %d, %Y})",
+        body_plain=plain_body,
+        csv_data=attachments[0][0] if attachments else None,
+        filename=attachments[0][1] if attachments else None,
+        body_html=html_body,
+    )
+    log.info("Payment-changed alert sent for %d bill(s).", count)
+
+    for bill, _, snap in replaced:
+        tracked[bill["id"]] = {"payment_id": snap["payment_id"], "ref": snap["ref"], "date": snap["date"]}
+    for bill, entry, snap in cancelled:
+        entry["alerted"] = True
+    _save_exported_payments(tracked)
 
 
 def _require_env(name: str) -> str:
@@ -180,6 +336,7 @@ def main() -> None:
     parser.add_argument("--to", metavar="EMAIL", help="override NOTIFY_EMAIL for this run only (e.g. to test a full run without emailing the full distribution list)")
     parser.add_argument("--reconcile", action="store_true", help="also retry syncing bills deferred by a prior run (see pending_sync_ids.json) — runs alongside the normal fetch, e.g. combine with --mark-synced for the daily task")
     parser.add_argument("--audit", action="store_true", help="sweep Ramp directly for any bill that should be synced but isn't (ignores local state); combine with --date-from to limit the range")
+    parser.add_argument("--check-payments", action="store_true", help="only run the check for exported bills whose Ramp payment was later cancelled, reversed, or replaced (also runs automatically on every normal run)")
     parser.add_argument("--check-vendor-ids", action="store_true", help="read-only: list vendors whose exported Vendor ID would change if the export used Ramp's External ID field, or that exceed Sage's 20-char limit (needs vendors:read scope)")
     args = parser.parse_args()
 
@@ -276,6 +433,7 @@ def main() -> None:
             extra_attachments=[(payment_csv, payment_filename)],
         )
         log.info("Re-export email sent.")
+        _record_exported_payments(payment_rows)
         return
 
     if args.dump_raw:
@@ -329,6 +487,17 @@ def main() -> None:
     gmail_user = _require_env("GMAIL_USER")
     gmail_pass = _require_env("GMAIL_APP_PASSWORD")
     notify_email = [args.to] if args.to else [e.strip() for e in _require_env("NOTIFY_EMAIL").split(",") if e.strip()]
+
+    if args.check_payments:
+        _check_payment_changes(client_id, client_secret, log, args.dry_run, gmail_user, gmail_pass, notify_email)
+        return
+
+    # Runs before the normal export and never blocks it — a failure here is
+    # logged, and the day's new bills still go out.
+    try:
+        _check_payment_changes(client_id, client_secret, log, args.dry_run, gmail_user, gmail_pass, notify_email)
+    except Exception:
+        log.exception("Payment check failed -- continuing with the normal export.")
 
     exported_ids = _load_exported_ids() if not args.date_from else set()
 
@@ -414,6 +583,7 @@ def main() -> None:
 
     new_ids = exported_ids | {row["id"] for row in purchase_rows}
     _save_exported_ids(new_ids)
+    _record_exported_payments(payment_rows)
     log.info("State file updated. %d total exported IDs tracked.", len(new_ids))
 
     if args.mark_synced:

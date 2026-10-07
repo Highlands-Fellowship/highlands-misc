@@ -25,6 +25,7 @@ reaching Sage — see _effective_invoice_number().
 """
 
 import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
 import re
 import requests
@@ -32,6 +33,13 @@ import requests
 RAMP_TOKEN_URL = "https://api.ramp.com/developer/v1/token"
 RAMP_BILLS_URL = "https://api.ramp.com/developer/v1/bills"
 RAMP_SYNCS_URL = "https://api.ramp.com/developer/v1/accounting/syncs"
+
+try:
+    # Windows has no system time zone database — needs the tzdata package
+    # (pip install -r requirements.txt).
+    _LOCAL_TZ = ZoneInfo("America/New_York")
+except ZoneInfoNotFoundError:
+    raise SystemExit("ERROR: time zone data missing -- run: pip install -r requirements.txt")
 
 
 def _get_token(client_id: str, client_secret: str, write: bool = False) -> str:
@@ -84,10 +92,24 @@ def _clean_text(s: str) -> str:
 
 
 def _format_date(raw: str) -> str:
+    """MM/DD/YYYY in Eastern time.
+
+    Ramp sends two kinds of date values, both as UTC ISO strings:
+      - real timestamps (created_at, payment_processed_at) — converted to
+        Eastern before taking the date. A reimbursement Ramp paid at 10:52 PM
+        Eastern on 9/30 arrives as 2026-10-01T02:52Z and was landing in the
+        next month's books.
+      - date-only values encoded as midnight UTC (accounting_date,
+        payment_date, due_at) — left alone; converting those would shift
+        every one of them back a day.
+    """
     if not raw:
         return ""
     try:
         dt = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        is_date_only = dt.utcoffset() == datetime.timedelta(0) and dt.time() == datetime.time(0)
+        if dt.tzinfo is not None and not is_date_only:
+            dt = dt.astimezone(_LOCAL_TZ)
         return dt.strftime("%m/%d/%Y")
     except Exception:
         return raw[:10]
@@ -501,6 +523,69 @@ def fetch_bills_by_ids(
         bills.append(resp.json())
 
     return _expand_bills(bills)
+
+
+def fetch_all_bills(client_id: str, client_secret: str) -> list[dict]:
+    """Every bill in Ramp, unfiltered — for the payment-changed check, which
+    has to look at already-synced bills the normal fetch skips."""
+    token = _get_token(client_id, client_secret)
+    bills: list[dict] = []
+    params: dict = {"page_size": 100}
+    next_cursor = None
+
+    while True:
+        if next_cursor:
+            if next_cursor.startswith("http"):
+                body = _get(token, {}, url=next_cursor)
+            else:
+                body = _get(token, {"page_size": 100, "start": next_cursor})
+        else:
+            body = _get(token, params)
+
+        bills.extend(body.get("data", []))
+
+        next_cursor = body.get("page", {}).get("next")
+        if not next_cursor:
+            break
+        params = {}
+
+    return bills
+
+
+def payment_snapshot(bill: dict) -> dict:
+    """A bill's payment as it stands right now, in the shape the
+    payment-changed check stores and compares.
+
+    payment_id is blank unless the payment has actually left the bank
+    (_is_exportable_status) — so a cancelled/reversed payment and a
+    replacement that hasn't completed yet both read as "no active payment".
+    """
+    payment = bill.get("payment") or {}
+    active = bool(payment.get("id")) and _is_exportable_status(bill)
+    return {
+        "payment_id": (payment.get("id") or "").strip() if active else "",
+        "ref": _check_number(payment, bill["id"]) if payment else "",
+        "date": _format_date(
+            payment.get("payment_date") or payment.get("effective_date") or bill.get("paid_at") or ""
+        ),
+        "status": bill.get("status_summary") or "",
+    }
+
+
+def bill_summary(bill: dict) -> dict:
+    """Vendor / Sage invoice number / amount, for alert emails."""
+    return {
+        "vendor": (bill.get("vendor") or {}).get("name") or "unknown vendor",
+        "invoice": _effective_invoice_number(bill),
+        "amount": _bill_amount(bill),
+    }
+
+
+def build_payment_rows(bills: list[dict]) -> list[dict]:
+    """Payments Journal rows for just these bills' current payments (no
+    Purchases rows) — used to send a replacement payment for a bill whose
+    invoice is already in Sage."""
+    return _group_payments([_expand_payment(b) for b in bills])
 
 
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)

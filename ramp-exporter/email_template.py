@@ -157,6 +157,24 @@ _SKIPPED_BOX_NOT_EXPORTED = """
   </tr>
 </table>"""
 
+_SKIPPED_BOX_PAYMENT_CHANGED = """
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:20px;">
+  <tr>
+    <td style="background:#fff8e6; border-left:4px solid {yellow}; border-radius:4px;
+               padding:14px 18px;">
+      <p style="margin:0 0 8px; font-size:12px; font-weight:700; color:{navy};
+                text-transform:uppercase; letter-spacing:0.5px;">
+        &#9888;&nbsp; {count} Bill(s) &mdash; Payment Changed After Export
+      </p>
+      <p style="margin:0 0 10px; font-size:13px; color:{near_black};">
+        Sage 50 still shows the <strong>original payment</strong> for each bill below,
+        but Ramp has since cancelled, reversed, or replaced it.
+      </p>
+      {rows}
+    </td>
+  </tr>
+</table>"""
+
 _SKIPPED_ROW = (
     '<p style="margin:4px 0; font-size:13px; color:{near_black};">'
     '<strong>{date}&nbsp;&nbsp;{merchant}</strong>'
@@ -316,6 +334,48 @@ def build_reimbursement_email(
     )
 
 
+def build_billpay_payment_changed_email(
+    count: int,
+    gen_date: str,
+    items: list[dict],
+    has_csv: bool,
+) -> tuple[str, str]:
+    """Return (html, plain_text) when bills already exported to Sage had their
+    Ramp payment cancelled, reversed, or replaced afterward."""
+    void_step = (
+        "Void each original payment listed below: Tasks &rsaquo; Void Checks, with the "
+        "void date set to when Ramp cancelled/reversed it (bill&rsquo;s Activity tab in Ramp)"
+    )
+    if has_csv:
+        import_path = (
+            f"1. {void_step} &mdash; skip any already voided<br>"
+            "2. <strong>sage_bill_payments_changed_*.csv</strong> &rsaquo; "
+            "File &rsaquo; Select Import/Export &rsaquo; Accounts Payable &rsaquo; Payments Journal &rsaquo; Import<br>"
+            "Do not re-import the purchase &mdash; the invoice is already in Sage."
+        )
+        intro = (
+            f"{count} bill(s) already exported to Sage 50 had their Ramp payment changed. "
+            "Replacement payments that have completed are in the attached Payments Journal CSV."
+        )
+    else:
+        import_path = (
+            f"{void_step}.<br>"
+            "Any replacement payment will be emailed automatically once it completes."
+        )
+        intro = (
+            f"{count} bill(s) already exported to Sage 50 had their Ramp payment "
+            "cancelled or reversed. No replacement payment has completed yet."
+        )
+    return _build(
+        heading="Bill Payments Changed After Export",
+        intro=intro,
+        import_path=import_path,
+        gen_date=gen_date,
+        skipped=items,
+        payment_changed=True,
+    )
+
+
 def _build(
     heading: str,
     intro: str,
@@ -324,6 +384,7 @@ def _build(
     import_path: str | None = None,
     pending: bool = False,
     not_exported: bool = False,
+    payment_changed: bool = False,
 ) -> tuple[str, str]:
     fmt = dict(
         navy=NAVY, teal=TEAL, yellow=YELLOW, cream=CREAM,
@@ -344,7 +405,9 @@ def _build(
             )
             for s in skipped
         )
-        if not_exported:
+        if payment_changed:
+            box_template = _SKIPPED_BOX_PAYMENT_CHANGED
+        elif not_exported:
             box_template = _SKIPPED_BOX_NOT_EXPORTED
         elif pending:
             box_template = _SKIPPED_BOX_PENDING
@@ -378,7 +441,9 @@ def _build(
         )
         plain += f"\n{import_path_plain}\n"
     if skipped:
-        if not_exported:
+        if payment_changed:
+            label = "ACTION REQUIRED (PAYMENT CHANGED AFTER EXPORT)"
+        elif not_exported:
             label = "ACTION REQUIRED (NOT YET EXPORTED)"
         elif pending:
             label = "ACTION REQUIRED"

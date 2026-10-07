@@ -21,12 +21,20 @@ Key field locations (confirmed from live API):
 """
 
 import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
 import requests
 
 RAMP_TOKEN_URL = "https://api.ramp.com/developer/v1/token"
 RAMP_REIMBURSEMENTS_URL = "https://api.ramp.com/developer/v1/reimbursements"
 RAMP_SYNCS_URL = "https://api.ramp.com/developer/v1/accounting/syncs"
+
+try:
+    # Windows has no system time zone database — needs the tzdata package
+    # (pip install -r requirements.txt).
+    _LOCAL_TZ = ZoneInfo("America/New_York")
+except ZoneInfoNotFoundError:
+    raise SystemExit("ERROR: time zone data missing -- run: pip install -r requirements.txt")
 
 
 def _get_token(client_id: str, client_secret: str, write: bool = False) -> str:
@@ -103,10 +111,24 @@ def _clean_text(s: str) -> str:
 
 
 def _format_date(raw: str) -> str:
+    """MM/DD/YYYY in Eastern time.
+
+    Ramp sends two kinds of date values, both as UTC ISO strings:
+      - real timestamps (created_at, payment_processed_at) — converted to
+        Eastern before taking the date. A reimbursement Ramp paid at 10:52 PM
+        Eastern on 9/30 arrives as 2026-10-01T02:52Z and was landing in the
+        next month's books.
+      - date-only values encoded as midnight UTC (accounting_date,
+        payment_date, due_at) — left alone; converting those would shift
+        every one of them back a day.
+    """
     if not raw:
         return ""
     try:
         dt = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        is_date_only = dt.utcoffset() == datetime.timedelta(0) and dt.time() == datetime.time(0)
+        if dt.tzinfo is not None and not is_date_only:
+            dt = dt.astimezone(_LOCAL_TZ)
         return dt.strftime("%m/%d/%Y")
     except Exception:
         return raw[:10]

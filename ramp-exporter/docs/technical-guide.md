@@ -138,7 +138,7 @@ Import into Sage 50 via: **File → Select Import/Export → Accounts Payable �
 
 | Sage 50 GJ column | Source |
 |---|---|
-| Date | `payment_processed_at` (falls back to `accounting_date`, `transaction_date`) |
+| Date | `payment_processed_at` (falls back to `accounting_date`, `transaction_date`), converted from UTC to Eastern — a reimbursement Ramp pays after 8 PM Eastern on the last day of a month would otherwise land in the next month |
 | Reference | `Ramp Reimbursement` (fixed, 18 chars — Sage's General Journal Reference field is limited to 20 characters) |
 | Description | `user_full_name - memo` (e.g. `Melissa Mcfarlane - Hotel stay`) |
 | G/L Account (debit) | `line_items[].accounting_field_selections[type=GL_ACCOUNT].external_code` |
@@ -184,7 +184,17 @@ Import into Sage 50 via: **File → Select Import/Export → General Ledger → 
    - **Purchases Journal** (`sage_bill_purchases_YYYYMMDD.csv`) — one row per line item, same 49-column format as card transactions. Invoice numbers come directly from Ramp (no auto-generation needed).
    - **Payments Journal** (`sage_bill_payments_YYYYMMDD.csv`) — one row per bill recording the ACH/check payment.
 4. Emails both CSVs as attachments via branded HTML email.
-5. Records exported bill IDs in `exported_bill_ids.json`.
+5. Records exported bill IDs in `exported_bill_ids.json`, and each bill's payment in `exported_bill_payments.json` (see **Payment changed after export** below).
+
+### Payment changed after export
+
+Every run first checks bills already sent to Sage for a Ramp payment that was later **cancelled, reversed, or replaced**. Ramp keeps those bills marked synced, so without this check the change never reaches Sage. For example, a check sent to Sage in July, then cancelled and re-paid by ACH in September: Sage kept the voided check and never got the ACH.
+
+- **Payment cancelled, nothing replacing it yet:** one alert email ("Bill Payments Changed After Export"). **Void the original payment in Sage** (Tasks > Void Checks) with the void date set to when Ramp cancelled or reversed it, shown on the bill's Activity tab.
+- **A replacement payment has left the bank:** a second alert with `sage_bill_payments_changed_YYYYMMDD.csv` attached. Void the original if you haven't already, then import the CSV into the **Payments Journal**. Don't re-import the purchase, because the invoice is already in Sage.
+
+What was sent is tracked in `exported_bill_payments.json`. Bills exported before this check existed start being tracked from their current payment the first time it runs, so it can't catch changes that happened before then. A failure in this check is logged and never blocks the day's normal export.
+
 
 ### Field mapping — Purchases Journal
 
@@ -192,7 +202,7 @@ Import into Sage 50 via: **File → Select Import/Export → General Ledger → 
 |---|---|
 | Vendor ID | `vendor.remote_id` (falls back to `remote_code`, then `vendor.name`) |
 | Invoice/CM # | `invoice_number` (from Ramp — present on all bills) |
-| Date | `created_at` (falls back to `draft_bill_created_at`, `issued_at`, `accounting_date`) — the date the bill was received and entered into Ramp, per accrual accounting: the expense and AP liability are recognized when the bill is entered, not when it's later paid (see the Payments Journal's Date below for that) |
+| Date | `created_at` (falls back to `draft_bill_created_at`, `issued_at`, `accounting_date`) — the date the bill was received and entered into Ramp, per accrual accounting: the expense and AP liability are recognized when the bill is entered, not when it's later paid (see the Payments Journal's Date below for that). Ramp timestamps are UTC; the exporter converts them to Eastern before taking the date, so a bill entered after 8 PM on the last day of a month stays in that month (date-only fields, which Ramp sends as midnight UTC, aren't converted) |
 | Date Due / Discount Date | `due_at` (falls back to the Date above) — AP aging/scheduling metadata only; doesn't affect which period the GL entry posts to, so it can safely land in a later period than Date |
 | G/L Account | `line_items[].accounting_field_selections[category_info.type=GL_ACCOUNT].external_code` |
 | Amount | `line_items[].amount.amount / minor_unit_conversion_rate` |
@@ -268,6 +278,9 @@ python billpay.py --audit --dry-run
 # change if the export used Ramp's External ID field, plus any over Sage's
 # 20-char limit or with no ID at all. Needs the vendors:read scope.
 python billpay.py --check-vendor-ids
+
+# Payment-changed check only (it also runs automatically on every normal run)
+python billpay.py --check-payments --dry-run
 ```
 
 **Import order matters:**
@@ -375,6 +388,7 @@ Edit `setup_task.ps1` to set `$SCRIPT_DIR`, `$PYTHON_EXE`, and the hour variable
 | `exported_statement_ids.json` | State file for card statement IDs (auto-created) |
 | `exported_reimb_ids.json` | State file for reimbursement IDs (auto-created) |
 | `exported_bill_ids.json` | State file for bill IDs (auto-created) |
+| `exported_bill_payments.json` | Payment sent to Sage for each exported bill, for the payment-changed check (auto-created) |
 | `pending_sync_ids.json` | Bills exported but not yet fully synced in Ramp — retry with `billpay.py --reconcile` (auto-created) |
 | `output\` | Generated CSVs (auto-created) |
 | `logs\` | Daily log files (auto-created) |
