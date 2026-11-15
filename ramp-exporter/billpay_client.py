@@ -13,7 +13,7 @@ Run  python billpay.py --dump-raw  to inspect raw JSON before going live.
 Key field locations (verify with --dump-raw against a live bill):
   - Vendor ID:   bill.vendor.remote_id  (fallback: remote_code, name)
   - Invoice #:   bill.invoice_number    (present on bills — no generation needed)
-  - Date:        bill.accounting_date   (fallback: paid_at, issued_at)
+  - Date:        bill.accounting_date   (fallback: created_at, draft_bill_created_at, issued_at)
   - GL Account:  line_items[].accounting_field_selections[type=GL_ACCOUNT].external_code
   - Amount:      line_items[].amount.amount / minor_unit_conversion_rate
   - Department:  accounting_field_selections[type=DEPARTMENT].external_id
@@ -298,17 +298,21 @@ def _expand_bill(bill: dict) -> list[dict]:
     vendor_id = _vendor_id(bill)
     invoice = _effective_invoice_number(bill)
     # Accrual accounting per CFO guidance: the Purchase (expense debit + AP
-    # liability credit) is dated when the bill was received and entered into
-    # Ramp, NOT when it's later paid — created_at is the closest match to
-    # that. This is deliberately different from _expand_payment()'s date,
-    # which correctly uses payment.payment_date (the actual bank debit) to
-    # clear the AP liability later. accounting_date/issued_at are defensive
-    # fallbacks only, for the unlikely case created_at is missing.
+    # liability credit) is dated when the expense was incurred, NOT when it's
+    # later paid. accounting_date is Ramp's editable "Accounting date" on the
+    # bill: it defaults to the day the bill is entered, and whoever enters the
+    # bill can move it into the month the expense belongs to (e.g. a Kingsway
+    # October invoice entered Nov 2 can be set to Oct 31). created_at was used
+    # before, but nobody can edit it, so a month-end invoice entered in the
+    # next month always posted in the wrong month. This is deliberately
+    # different from _expand_payment()'s date, which uses
+    # payment.payment_date (the actual bank debit) to clear the AP liability.
+    # The rest are fallbacks for a bill with no accounting_date.
     raw_date = (
-        bill.get("created_at")
+        bill.get("accounting_date")
+        or bill.get("created_at")
         or bill.get("draft_bill_created_at")
         or bill.get("issued_at")
-        or bill.get("accounting_date")
         or ""
     )
     date_str = _format_date(raw_date)
